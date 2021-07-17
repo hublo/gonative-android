@@ -1034,7 +1034,7 @@ public class UrlNavigation {
     }
 
     public boolean chooseFileUpload(final String[] mimetypespec, final boolean multiple) {
-        mainActivity.getPermission(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE}, (permissions, grantResults) -> {
+        mainActivity.getPermission(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, (permissions, grantResults) -> {
             boolean isAllPermissionsGranted = PermissionUtils.isAllGranted(permissions, grantResults);
             if (isAllPermissionsGranted) {
                 chooseFileUploadAfterPermission(mimetypespec, multiple);
