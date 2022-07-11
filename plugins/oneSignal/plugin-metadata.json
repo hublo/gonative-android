@@ -1,0 +1,7 @@
+{
+  "plugin": {
+    "packageName": "io.gonative.android.plugins.oneSignal",
+    "classInstance": "OneSignalPlugin",
+    "pluginName": "onesignal-plugin"
+  }
+}

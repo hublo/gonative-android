@@ -5,18 +5,14 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Color;
-import android.graphics.drawable.Drawable;
 import android.util.Log;
 
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import com.aurelhubert.ahbottomnavigation.AHBottomNavigation;
 import com.aurelhubert.ahbottomnavigation.AHBottomNavigationItem;
-import com.joanzapata.iconify.IconDrawable;
-import com.joanzapata.iconify.fonts.FontAwesomeIcons;
 
 import org.json.JSONArray;
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
@@ -26,6 +22,8 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 import io.gonative.android.library.AppConfig;
+import io.gonative.gonative_core.LeanUtils;
+import io.gonative.android.icons.Icon;
 
 /**
  * Created by Weiyin He on 9/22/14.
@@ -38,6 +36,9 @@ public class TabManager implements AHBottomNavigation.OnTabSelectedListener {
     private String currentMenuId;
     private String currentUrl;
     private JSONArray tabs;
+    private final int maxTabs = 5;
+    private int tabbar_icon_size;
+    private int tabbar_icon_padding;
     private Map<JSONObject, List<Pattern>> tabRegexCache = new HashMap<>(); // regex for each tab to auto-select
     private boolean useJavascript; // do not use tabs from config
     AppConfig appConfig;
@@ -50,6 +51,8 @@ public class TabManager implements AHBottomNavigation.OnTabSelectedListener {
 
     TabManager(MainActivity mainActivity, AHBottomNavigation bottomNavigationView) {
         this.mainActivity = mainActivity;
+        tabbar_icon_size = this.mainActivity.getResources().getInteger(R.integer.tabbar_icon_size);
+        tabbar_icon_padding = this.mainActivity.getResources().getInteger(R.integer.tabbar_icon_padding);
         this.bottomNavigationView = bottomNavigationView;
         this.bottomNavigationView.setOnTabSelectedListener(this);
         this.appConfig = AppConfig.getInstance(this.mainActivity);
@@ -66,6 +69,7 @@ public class TabManager implements AHBottomNavigation.OnTabSelectedListener {
         if (appConfig.tabBarTextColor != null) {
             this.bottomNavigationView.setInactiveColor(appConfig.tabBarTextColor);
         }
+        this.bottomNavigationView.setTitleTextSizeInSp(12, 12);
 
         BroadcastReceiver broadcastReceiver = new BroadcastReceiver() {
             @Override
@@ -126,7 +130,11 @@ public class TabManager implements AHBottomNavigation.OnTabSelectedListener {
             this.currentMenuId = id;
             JSONArray tabs = AppConfig.getInstance(this.mainActivity).tabMenus.get(id);
             setTabs(tabs);
-            showTabs();
+            if(bottomNavigationView.getItemsCount() == 0) {
+                hideTabs();
+            } else {
+                showTabs();
+            }
         }
     }
 
@@ -135,26 +143,31 @@ public class TabManager implements AHBottomNavigation.OnTabSelectedListener {
 
         int selectedNumber = -1;
         bottomNavigationView.removeAllItems();
+        if(tabs == null) return;
         for (int i = 0; i < tabs.length(); i++) {
+            if(i > (maxTabs-1)){
+                Log.e(TAG, "Tab menu items list should not have more than 5 items");
+                break;
+            }
+
             JSONObject item = tabs.optJSONObject(i);
             if (item == null) continue;
 
             String label = item.optString("label");
             String icon = item.optString("icon");
 
-            Drawable iconDrawable = null;
-            if (icon != null) {
-                icon = icon.replaceAll("-", "_");
-                try {
-                    iconDrawable = new IconDrawable(this.mainActivity, FontAwesomeIcons.valueOf(icon))
-                        .actionBarSize().color(appConfig.actionbarForegroundColor);
-                } catch (IllegalArgumentException e) {
-                    // icon was not found in IconValue enum
-                    Log.e(TAG, e.getMessage(), e);
-                }
+            // if no label, icon and url is provided, do not include
+            if(label.isEmpty() && icon.isEmpty() && item.optString("url").isEmpty()){
+                continue;
             }
 
-            AHBottomNavigationItem navigationItem = new AHBottomNavigationItem(label, iconDrawable);
+            // set default drawable "Question Mark" when no icon provided
+            if (icon.isEmpty()) {
+                icon = "faw_question";
+                Log.e(TAG, "All tabs must have icons.");
+            }
+            
+            AHBottomNavigationItem navigationItem = new AHBottomNavigationItem(label, new Icon(mainActivity.getApplicationContext(), icon, tabbar_icon_size, Color.BLACK).getDrawable());
             bottomNavigationView.addItem(navigationItem);
 
             if (item.optBoolean("selected")) {
@@ -256,20 +269,15 @@ public class TabManager implements AHBottomNavigation.OnTabSelectedListener {
         return false;
     }
 
-    public void setTabsWithJson(String tabsJson) {
-        JSONObject tabsConfig;
-        try {
-            tabsConfig = new JSONObject(tabsJson);
-        } catch (JSONException e) {
-            return;
-        }
+    public void setTabsWithJson(JSONObject tabsJson) {
+        if(tabsJson == null) return;
 
         this.useJavascript = true;
 
-        JSONArray tabs = tabsConfig.optJSONArray("items");
+        JSONArray tabs = tabsJson.optJSONArray("items");
         if (tabs != null) setTabs(tabs);
 
-        Object enabled = tabsConfig.opt("enabled");
+        Object enabled = tabsJson.opt("enabled");
         if (enabled instanceof Boolean) {
             if ((Boolean)enabled) {
                 this.showTabs();

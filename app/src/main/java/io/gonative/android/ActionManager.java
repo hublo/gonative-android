@@ -2,12 +2,12 @@ package io.gonative.android;
 
 import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
-import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 
-import com.joanzapata.iconify.IconDrawable;
-import com.joanzapata.iconify.fonts.FontAwesomeIcons;
+import androidx.appcompat.widget.SearchView;
+
+import io.gonative.android.icons.Icon;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -28,10 +28,16 @@ public class ActionManager {
     private MainActivity activity;
     private String currentMenuID;
     private HashMap<MenuItem, String>itemToUrl;
+    private int action_button_size;
+
+    // needs to be integers declared here
+    private final int action_button_size_XPx = 64;
+    private final int action_button_size_YPx = 64;
 
     ActionManager(MainActivity activity) {
         this.activity = activity;
         this.itemToUrl = new HashMap<>();
+        action_button_size = this.activity.getResources().getInteger(R.integer.action_button_size);
     }
 
     public void checkActions(String url) {
@@ -101,18 +107,8 @@ public class ActionManager {
                     String label = AppConfig.optString(entry, "label");
                     String icon = AppConfig.optString(entry, "icon");
                     String url = AppConfig.optString(entry, "url");
-
-                    Drawable iconDrawable = null;
-                    if (icon != null) {
-                        icon = icon.replaceAll("-", "_");
-                        try {
-                            iconDrawable = new IconDrawable(this.activity, FontAwesomeIcons.valueOf(icon))
-                                    .actionBarSize().color(appConfig.actionbarForegroundColor);
-                        } catch (IllegalArgumentException e) {
-                            // icon was not found in IconValue enum
-                            Log.e(TAG, e.getMessage(), e);
-                        }
-                    }
+                    
+                    Drawable iconDrawable = new Icon(activity, icon, action_button_size, appConfig.actionbarForegroundColor).getDrawable();
 
                     MenuItem menuItem = menu.add(Menu.NONE, itemID, Menu.NONE, label)
                             .setIcon(iconDrawable)
@@ -126,6 +122,9 @@ public class ActionManager {
     }
 
     public boolean onOptionsItemSelected(MenuItem item) {
+        if (activity.getCurrentFocus() instanceof SearchView.SearchAutoComplete) {
+            activity.getCurrentFocus().clearFocus();
+        }
         String url = this.itemToUrl.get(item);
         if (url != null) {
             if (url.equals(ACTION_SHARE)) {
@@ -138,5 +137,9 @@ public class ActionManager {
         } else {
             return false;
         }
+    }
+    
+    public HashMap<MenuItem, String> getItemToUrl() {
+        return itemToUrl;
     }
 }

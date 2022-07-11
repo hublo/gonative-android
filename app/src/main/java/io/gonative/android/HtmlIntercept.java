@@ -19,6 +19,8 @@ import java.util.Locale;
 import java.util.Map;
 
 import io.gonative.android.library.AppConfig;
+import io.gonative.gonative_core.GoNativeWebviewInterface;
+import io.gonative.gonative_core.LeanUtils;
 
 /**
  * Created by weiyin on 1/29/16.
@@ -29,6 +31,7 @@ public class HtmlIntercept {
 
     private Context context;
     private String interceptUrl;
+    private String JSBridgeScript;
 
     // track whether we have intercepted a page at all. We will always try to intercept the first time,
     // because interceptUrl may not have been set if restoring from a bundle.
@@ -119,9 +122,14 @@ public class HtmlIntercept {
                 return null;
 
             // get and intercept the data
-            String encoding = connection.getContentEncoding();
-            if (encoding == null)
-                encoding = "UTF-8";
+            String characterEncoding = getCharset(mimetype);
+            if (characterEncoding == null) {
+                characterEncoding = "UTF-8";
+            } else if (characterEncoding.toLowerCase().equals("iso-8859-1")) {
+                // windows-1252 is a superset of ios-8859-1 that supports the euro symbol €.
+                // The html5 spec actually maps "iso-8859-1" to windows-1252 encoding
+                characterEncoding = "windows-1252";
+            }
 
             if (is == null) {
                 try {
@@ -139,7 +147,7 @@ public class HtmlIntercept {
             IOUtils.copy(is, baos);
             String origString;
             try {
-                origString = baos.toString(encoding);
+                origString = baos.toString(characterEncoding);
             } catch (UnsupportedEncodingException e){
                 // Everything should support UTF-8
                 origString = baos.toString("UTF-8");
@@ -151,9 +159,12 @@ public class HtmlIntercept {
             if (insertPoint >= 0) {
                 StringBuilder builder = new StringBuilder(initialLength);
                 builder.append(origString.substring(0, insertPoint));
-                if (appConfig.customCSS != null) {
+                if (appConfig.customCSS != null || appConfig.androidCustomCSS != null) {
                     builder.append("<style>");
-                    builder.append(appConfig.customCSS);
+                    if(appConfig.customCSS != null)
+                        builder.append(appConfig.customCSS).append(" ");
+                    if(appConfig.androidCustomCSS != null)
+                        builder.append(appConfig.androidCustomCSS);
                     builder.append("</style>");
                 }
                 if (appConfig.stringViewport != null) {
@@ -233,5 +244,20 @@ public class HtmlIntercept {
 
     private static boolean stringsNotEqual(String s1, String s2) {
         return !(s1 == null ? s2 == null : s1.equals(s2));
+    }
+
+    private static String getCharset(String contentType) {
+        if (contentType == null || contentType.isEmpty()) {
+            return null;
+        }
+
+        String[] tokens = contentType.split("; *");
+        for (String s : tokens) {
+            if (s.startsWith("charset=")) {
+                return s.substring("charset=".length());
+            }
+        }
+
+        return null;
     }
 }

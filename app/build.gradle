@@ -1,33 +1,48 @@
-buildscript {
-    repositories {
-        maven { url 'https://plugins.gradle.org/m2/'}
-    }
-    dependencies {
-        classpath 'gradle.plugin.com.onesignal:onesignal-gradle-plugin:0.12.10'
-    }
-}
-apply plugin: 'com.onesignal.androidsdk.onesignal-gradle-plugin'
-
-repositories {
-    maven { url 'https://maven.google.com' }
-}
+import groovy.json.JsonSlurper
 
 apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+ext {
+    fbAppId = ""
+    onesignalAppId = ""
+    adMobAppId = ""
+}
+
+task parseAppConfig {
+    def jsonFile = file('src/main/assets/appConfig.json')
+    def parsedJson = new JsonSlurper().parseText(jsonFile.text)
+    if (parsedJson.services.facebook && parsedJson.services.facebook.appId) {
+        fbAppId = parsedJson.services.facebook.appId
+    }
+    if (parsedJson.services.socialLogin && parsedJson.services.socialLogin.facebookLogin && parsedJson.services.socialLogin.facebookLogin.appId) {
+        fbAppId = parsedJson.services.socialLogin.facebookLogin.appId
+    }
+    if (parsedJson.services.oneSignal && parsedJson.services.oneSignal.applicationId) {
+        onesignalAppId = parsedJson.services.oneSignal.applicationId
+    }
+    if (parsedJson.services.admobAndroid && parsedJson.services.admobAndroid.applicationId) {
+        adMobAppId = parsedJson.services.admobAndroid.applicationId
+    }
+}
+build.dependsOn parseAppConfig
 
 android {
-    compileSdkVersion 30
+    compileSdkVersion 31
 
     defaultConfig {
-        minSdkVersion 16
-        targetSdkVersion 30
+        minSdkVersion 21
+        targetSdkVersion 31
         applicationId "fr.medgo.medgo1"
-        versionCode 43
+        versionCode 4
         multiDexEnabled true
         vectorDrawables.useSupportLibrary = true
 
         manifestPlaceholders = [manifestApplicationId: "${applicationId}",
                                 onesignal_app_id: "54238b1e-3d06-4ca2-987d-552487546f59",
-                                onesignal_google_project_number: "REMOTE"]
+                                onesignal_google_project_number: "REMOTE",
+                                admob_app_id: adMobAppId,
+                                facebook_app_id: fbAppId ]
     }
 
     compileOptions {
@@ -52,7 +67,7 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix ".debug"
+	        applicationIdSuffix ".debug"
         }
         release {
             minifyEnabled true
@@ -64,6 +79,7 @@ android {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-project.txt'
             zipAlignEnabled true
+            matchingFallbacks = ['release']
             signingConfig signingConfigs.upload
         }
     }
@@ -75,35 +91,39 @@ android {
             dimension "webview"
         }
     }
-    buildToolsVersion '30.0.3'
 }
 
 dependencies {
     /**** dependencies used by all apps ****/
+    implementation "androidx.core:core-ktx:1.6.0"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
     implementation 'com.aurelhubert:ahbottomnavigation:2.3.4'
-    implementation 'com.joanzapata.iconify:android-iconify-fontawesome:2.2.2'
-    implementation 'com.facebook.android:facebook-android-sdk:5.0.0'
     implementation 'com.squareup:seismic:1.0.2'
-    implementation 'com.onesignal:OneSignal:3.15.6'
-    implementation 'com.segment.analytics.android:analytics:4.9.4'
+    implementation 'androidx.webkit:webkit:1.4.0'
+    implementation "io.gonative.android:library:+"
+    implementation "io.gonative.android:icons:+"
+    implementation project(path: ':gonative-core')
     /**** end all apps ****/
 
     /**** add-on module dependencies ****/
     /**** end modules ****/
-
+    
     /**** Google Android and Play Services dependencies ****/
     implementation 'androidx.multidex:multidex:2.0.1'
     implementation 'androidx.cardview:cardview:1.0.0'
-    implementation 'androidx.browser:browser:1.3.0'
-    implementation 'androidx.appcompat:appcompat:1.3.0'
+    implementation 'androidx.browser:browser:1.2.0'
+    implementation 'androidx.appcompat:appcompat:1.2.0'
+    implementation 'com.google.android.material:material:1.3.0'
+    implementation "androidx.drawerlayout:drawerlayout:1.1.1"
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
     implementation 'com.google.android.gms:play-services-gcm:17.0.0'
-    implementation 'com.google.android.gms:play-services-location:18.0.0'
+    implementation 'com.google.android.gms:play-services-location:17.0.0'
     /**** end google ****/
-
-    implementation "com.airbnb.android:lottie:3.7.0"
 
     /**** local dependencies ****/
     implementation fileTree(dir: 'libs', include: '*.jar')
     implementation fileTree(dir: 'libs', include: '*.aar')
     /**** end local ****/
 }
+
+apply from: file("../plugins.gradle"); applyNativeModulesAppBuildGradle(project)

@@ -6,7 +6,6 @@ import android.graphics.Bitmap;
 import android.net.http.SslError;
 import android.os.Build;
 import android.os.Message;
-import android.util.Log;
 import android.webkit.ClientCertRequest;
 import android.webkit.SslErrorHandler;
 import android.webkit.WebResourceError;
@@ -16,6 +15,8 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 import androidx.annotation.RequiresApi;
+
+import io.gonative.gonative_core.GoNativeWebviewInterface;
 
 /**
  * Created by weiyin on 9/9/15.
