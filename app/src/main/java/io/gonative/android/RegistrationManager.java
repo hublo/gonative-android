@@ -4,21 +4,20 @@ import android.content.Context;
 import android.os.AsyncTask;
 import android.util.Log;
 
-import com.onesignal.OneSignal;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
+
+import io.gonative.gonative_core.LeanUtils;
 
 /**
  * Created by weiyin on 10/4/15.
@@ -27,9 +26,6 @@ public class RegistrationManager {
     private final static String TAG = RegistrationManager.class.getName();
 
     private Context context;
-    private String oneSignalUserId;
-    private String oneSignalRegistrationId;
-    private Boolean oneSignalSubscribed = false;
     private JSONObject customData;
     private String lastUrl;
 
@@ -71,14 +67,6 @@ public class RegistrationManager {
         }
     }
 
-    public void setOneSignalUserId(String oneSignalUserId, String oneSignalregistrationId,
-                                   Boolean oneSignalSubscribed) {
-        this.oneSignalUserId = oneSignalUserId;
-        this.oneSignalRegistrationId = oneSignalregistrationId;
-        this.oneSignalSubscribed = oneSignalSubscribed;
-        registrationDataChanged();
-    }
-
     public void setCustomData(JSONObject customData) {
         this.customData = customData;
         registrationDataChanged();
@@ -99,6 +87,9 @@ public class RegistrationManager {
         }
     }
 
+    public void subscriptionInfoChanged(){
+        registrationDataChanged();
+    }
 
     private class RegistrationEndpoint {
         private String postUrl;
@@ -110,17 +101,19 @@ public class RegistrationManager {
         }
 
         void sendRegistrationInfo() {
-            new SendRegistrationTask(this, RegistrationManager.this).execute();
+            new SendRegistrationTask(context, this, RegistrationManager.this).execute();
         }
     }
 
     private static class SendRegistrationTask extends AsyncTask<Void,Void,Void> {
         private RegistrationEndpoint registrationEndpoint;
         private RegistrationManager registrationManager;
+        private Context context;
 
-        SendRegistrationTask(RegistrationEndpoint registrationEndpoint, RegistrationManager registrationManager) {
+        SendRegistrationTask(Context context, RegistrationEndpoint registrationEndpoint, RegistrationManager registrationManager) {
             this.registrationEndpoint = registrationEndpoint;
             this.registrationManager = registrationManager;
+            this.context = context;
         }
 
         @Override
@@ -129,13 +122,9 @@ public class RegistrationManager {
 
             toSend.putAll(Installation.getInfo(registrationManager.context));
 
-            if (registrationManager.oneSignalUserId != null) {
-                toSend.put("oneSignalUserId", registrationManager.oneSignalUserId);
-                if (registrationManager.oneSignalRegistrationId != null) {
-                    toSend.put("oneSignalRegistrationId", registrationManager.oneSignalRegistrationId);
-                }
-                toSend.put("oneSignalSubscribed", registrationManager.oneSignalSubscribed);
-                toSend.put("oneSignalRequiresUserPrivacyConsent", !OneSignal.userProvidedPrivacyConsent());
+            // Append provider info to Map toSend
+            if (((GoNativeApplication) context).getAnalyticsProviderInfo() != null) {
+                toSend.putAll(((GoNativeApplication) context).getAnalyticsProviderInfo());
             }
 
             if (registrationManager.customData != null) {

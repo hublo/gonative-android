@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-	<string name="app_name">GoNative</string>
+	<string name="app_name">"Hublo"</string>
 	<string name="action_search">Search</string>
 	<string name="action_refresh">Refresh</string>
     <string name="action_share">Share</string>
@@ -34,4 +34,5 @@
 	<string name="starting_download">Starting download</string>
 	<string name="subscriptions_activity_title">Subscriptions</string>
 	<string name="cleared_cache">Cleared cache</string>
+	<string name="app_logo">App Logo</string>
 </resources>

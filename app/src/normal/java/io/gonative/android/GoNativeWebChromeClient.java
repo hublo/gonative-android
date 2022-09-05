@@ -47,6 +47,12 @@ class GoNativeWebChromeClient extends WebChromeClient {
     }
 
     @Override
+    public boolean onJsBeforeUnload(WebView view, String url, String message, JsResult result) {
+        urlNavigation.cancelLoadTimeout();
+        return super.onJsBeforeUnload(view, url, message, result);
+    }
+
+    @Override
     public void onGeolocationPermissionsShowPrompt(final String origin, final GeolocationPermissions.Callback callback) {
         if (!AppConfig.getInstance(mainActivity).usesGeolocation) {
             callback.invoke(origin, false, false);
@@ -149,6 +155,12 @@ class GoNativeWebChromeClient extends WebChromeClient {
         }
 
         mainActivity.setUploadMessageLP(filePathCallback);
+    
+        // Checks web's input file params for "capture" attribute
+        if (fileChooserParams.isCaptureEnabled()) {
+            return urlNavigation.openDirectCamera(fileChooserParams.getAcceptTypes(), multiple);
+        }
+    
         return urlNavigation.chooseFileUpload(fileChooserParams.getAcceptTypes(), multiple);
     }
 

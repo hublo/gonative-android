@@ -6,13 +6,17 @@ import android.graphics.Bitmap;
 import android.net.http.SslError;
 import android.os.Build;
 import android.os.Message;
-import android.util.Log;
+import android.webkit.ClientCertRequest;
 import android.webkit.SslErrorHandler;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+
+import androidx.annotation.RequiresApi;
+
+import io.gonative.gonative_core.GoNativeWebviewInterface;
 
 /**
  * Created by weiyin on 9/9/15.
@@ -76,6 +80,12 @@ public class GoNativeWebviewClient extends WebViewClient{
     public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
         handler.cancel();
         urlNavigation.onReceivedSslError(error);
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
+    @Override
+    public void onReceivedClientCertRequest(WebView view, ClientCertRequest request) {
+        urlNavigation.onReceivedClientCertRequest(view.getUrl(), request);
     }
 
     @Override

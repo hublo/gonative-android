@@ -13,6 +13,7 @@ import java.io.File;
 import java.util.Map;
 
 import io.gonative.android.library.AppConfig;
+import io.gonative.gonative_core.GoNativeWebviewInterface;
 
 /**
  * Created by weiyin on 9/8/15.
@@ -53,6 +54,14 @@ public class WebViewSetup {
 
         wv.removeJavascriptInterface("gonative_file_writer_sharer");
         wv.addJavascriptInterface(activity.getFileWriterSharer().getJavascriptBridge(), "gonative_file_writer_sharer");
+
+        // pass urlNavigation object for the interface to access handleJSBridgeFunctions()
+        activity.getJsBridgeInterface().setUrlNavigation(urlNavigation);
+
+        wv.removeJavascriptInterface("JSBridge");
+        wv.addJavascriptInterface(activity.getJsBridgeInterface().getJavascriptBridge(), "JSBridge");
+
+        ((GoNativeApplication) activity.getApplication()).mBridge.onWebviewSetUp(activity, wv);
 
         if (activity.getIntent().getBooleanExtra(MainActivity.EXTRA_WEBVIEW_WINDOW_OPEN, false)) {
             // send to other webview

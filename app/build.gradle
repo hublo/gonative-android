@@ -1,17 +1,48 @@
+import groovy.json.JsonSlurper
+
 apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+ext {
+    fbAppId = ""
+    onesignalAppId = ""
+    adMobAppId = ""
+}
+
+task parseAppConfig {
+    def jsonFile = file('src/main/assets/appConfig.json')
+    def parsedJson = new JsonSlurper().parseText(jsonFile.text)
+    if (parsedJson.services.facebook && parsedJson.services.facebook.appId) {
+        fbAppId = parsedJson.services.facebook.appId
+    }
+    if (parsedJson.services.socialLogin && parsedJson.services.socialLogin.facebookLogin && parsedJson.services.socialLogin.facebookLogin.appId) {
+        fbAppId = parsedJson.services.socialLogin.facebookLogin.appId
+    }
+    if (parsedJson.services.oneSignal && parsedJson.services.oneSignal.applicationId) {
+        onesignalAppId = parsedJson.services.oneSignal.applicationId
+    }
+    if (parsedJson.services.admobAndroid && parsedJson.services.admobAndroid.applicationId) {
+        adMobAppId = parsedJson.services.admobAndroid.applicationId
+    }
+}
+build.dependsOn parseAppConfig
 
 android {
-    compileSdkVersion 28
+    compileSdkVersion 31
 
     defaultConfig {
-        minSdkVersion 16
-        targetSdkVersion 28
-        applicationId "io.gonative.android"
-        versionCode 1
+        minSdkVersion 21
+        targetSdkVersion 31
+        applicationId "fr.medgo.medgo1"
+        versionCode 44
+        multiDexEnabled true
+        vectorDrawables.useSupportLibrary = true
 
         manifestPlaceholders = [manifestApplicationId: "${applicationId}",
-                                onesignal_app_id: "",
-                                onesignal_google_project_number: ""]
+                                onesignal_app_id: "54238b1e-3d06-4ca2-987d-552487546f59",
+                                onesignal_google_project_number: "REMOTE",
+                                admob_app_id: adMobAppId,
+                                facebook_app_id: fbAppId ]
     }
 
     compileOptions {
@@ -21,10 +52,10 @@ android {
 
     signingConfigs {
         release {
-            storeFile file("../../release.keystore")
-            storePassword "password"
-            keyAlias "release"
-            keyPassword "password"
+            storeFile file('../android.jks')
+            storePassword 'cocacola'
+            keyAlias 'MyAndroidKey'
+            keyPassword 'sweetsweden'
         }
         upload {
             storeFile file("../../upload.keystore")
@@ -48,6 +79,7 @@ android {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-project.txt'
             zipAlignEnabled true
+            matchingFallbacks = ['release']
             signingConfig signingConfigs.upload
         }
     }
@@ -63,21 +95,29 @@ android {
 
 dependencies {
     /**** dependencies used by all apps ****/
+    implementation "androidx.core:core-ktx:1.6.0"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
     implementation 'com.aurelhubert:ahbottomnavigation:2.3.4'
-    implementation 'com.joanzapata.iconify:android-iconify-fontawesome:2.2.2'
-    implementation 'com.facebook.android:facebook-android-sdk:5.0.0'
     implementation 'com.squareup:seismic:1.0.2'
+    implementation 'androidx.webkit:webkit:1.4.0'
+    implementation "io.gonative.android:library:+"
+    implementation "io.gonative.android:icons:+"
+    implementation project(path: ':gonative-core')
     /**** end all apps ****/
 
     /**** add-on module dependencies ****/
     /**** end modules ****/
     
     /**** Google Android and Play Services dependencies ****/
+    implementation 'androidx.multidex:multidex:2.0.1'
     implementation 'androidx.cardview:cardview:1.0.0'
     implementation 'androidx.browser:browser:1.2.0'
-    implementation 'androidx.appcompat:appcompat:1.1.0'
-    implementation 'com.google.android.gms:play-services-gcm:12.0.1'
-    implementation 'com.google.android.gms:play-services-location:12.0.1'
+    implementation 'androidx.appcompat:appcompat:1.2.0'
+    implementation 'com.google.android.material:material:1.3.0'
+    implementation "androidx.drawerlayout:drawerlayout:1.1.1"
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+    implementation 'com.google.android.gms:play-services-gcm:17.0.0'
+    implementation 'com.google.android.gms:play-services-location:17.0.0'
     /**** end google ****/
 
     /**** local dependencies ****/
@@ -85,3 +125,5 @@ dependencies {
     implementation fileTree(dir: 'libs', include: '*.aar')
     /**** end local ****/
 }
+
+apply from: file("../plugins.gradle"); applyNativeModulesAppBuildGradle(project)

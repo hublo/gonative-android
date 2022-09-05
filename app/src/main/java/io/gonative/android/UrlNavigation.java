@@ -5,6 +5,8 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -13,8 +15,8 @@ import android.content.pm.ResolveInfo;
 import android.location.LocationManager;
 import android.net.Uri;
 import android.net.http.SslError;
+import android.os.AsyncTask;
 import android.os.Build;
-import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Message;
@@ -22,33 +24,42 @@ import android.os.Parcelable;
 import android.preference.PreferenceManager;
 import android.provider.MediaStore;
 import android.provider.Settings;
-import androidx.localbroadcastmanager.content.LocalBroadcastManager;
-import androidx.appcompat.app.AlertDialog;
+import android.security.KeyChain;
+import android.security.KeyChainAliasCallback;
+import android.text.TextUtils;
 import android.util.Log;
 import android.util.Pair;
 import android.view.View;
-import android.webkit.CookieSyncManager;
+import android.view.WindowManager;
+import android.webkit.ClientCertRequest;
+import android.webkit.CookieManager;
 import android.webkit.MimeTypeMap;
 import android.webkit.ValueCallback;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
 
-import com.facebook.appevents.AppEventsLogger;
-import com.onesignal.OneSignal;
+import androidx.annotation.RequiresApi;
+import androidx.appcompat.app.AlertDialog;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.math.BigDecimal;
+import java.io.InputStream;
+import java.security.PrivateKey;
+import java.security.cert.X509Certificate;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Currency;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -56,6 +67,8 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import io.gonative.android.library.AppConfig;
+import io.gonative.gonative_core.GoNativeWebviewInterface;
+import io.gonative.gonative_core.LeanUtils;
 
 enum WebviewLoadState {
     STATE_UNKNOWN,
@@ -73,6 +86,8 @@ public class UrlNavigation {
 
     private static final String ASSET_URL = "file:///android_asset/";
     public static final String OFFLINE_PAGE_URL = "file:///android_asset/offline.html";
+    public static final String OFFLINE_PAGE_URL_RAW = "file:///offline.html";
+
     public static final int DEFAULT_HTML_SIZE = 10 * 1024; // 10 kilobytes
 
 	private MainActivity mainActivity;
@@ -86,6 +101,7 @@ public class UrlNavigation {
     private boolean finishOnExternalUrl = false;
     private boolean restoreBrightnessOnNavigation = false;
     private double connectionOfflineTime;
+    private String JSBridgeScript;
 
     UrlNavigation(MainActivity activity) {
 		this.mainActivity = activity;
@@ -106,7 +122,7 @@ public class UrlNavigation {
 
         connectionOfflineTime = appConfig.androidConnectionOfflineTime;
 	}
-	
+
 	private boolean isInternalUri(Uri uri) {
         String scheme = uri.getScheme();
         if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
@@ -135,6 +151,423 @@ public class UrlNavigation {
                 (host.equals(initialHost) || host.endsWith("." + initialHost));
     }
 
+    public void handleJSBridgeFunctions(Object jsData){
+        Uri uri;
+        JSONObject jsonData;
+        AppConfig appConfig = AppConfig.getInstance(mainActivity);
+
+        if(jsData instanceof Uri){
+            try {
+                uri = (Uri) jsData;
+                jsonData = LeanUtils.parseQueryParamsWithUri(uri); // can be null if only command is needed to be executed
+            } catch (Exception exception){
+                Log.d(TAG, "GoNative Handle JS Bridge Functions Error:- " + exception.getMessage());
+                return;
+            }
+        } else {
+            try {
+                JSONObject jsonObject = (JSONObject) jsData;
+                jsonData = jsonObject.optJSONObject("data"); // can be null if only command is needed to be executed
+                uri = Uri.parse(jsonObject.optString("gonativeCommand"));
+            } catch (Exception exception){
+                Log.d(TAG, "GoNative Handle JS Bridge Functions Error:- " + exception.getMessage());
+                return;
+            }
+        }
+
+        if (((GoNativeApplication) mainActivity.getApplication()).mBridge.shouldOverrideUrlLoading(mainActivity, uri, jsonData)) {
+            return;
+        }
+
+        if ("registration".equals(uri.getHost()) && "/send".equals(uri.getPath())) {
+            RegistrationManager registrationManager = ((GoNativeApplication) mainActivity.getApplication()).getRegistrationManager();
+            if(jsonData != null){
+                JSONObject customData = jsonData.optJSONObject("customData");
+                if(customData == null){
+                    try { // try converting json string from url to json object
+                        customData = new JSONObject(jsonData.optString("customData"));
+                    } catch (JSONException e){
+                        Log.e(TAG, "GoNative Registration JSONException:- " + e.getMessage());
+                    }
+                }
+                if(customData != null){
+                    registrationManager.setCustomData(customData);
+                }
+            }
+            registrationManager.sendToAllEndpoints();
+        }
+
+        if ("nativebridge".equals(uri.getHost())) {
+            if ("/multi".equals(uri.getPath())) {
+                if(jsonData == null) return;
+                String data = jsonData.optString("data");
+                if (data.isEmpty()) return;
+                try {
+                    JSONObject json = new JSONObject(data);
+                    JSONArray urls = json.getJSONArray("urls");
+                    for (int i = 0; i < urls.length(); i++) {
+                        String s = urls.getString(i);
+                        Uri u = Uri.parse(s);
+                        if (!"gonative".equals(u.getScheme())) continue;
+                        handleJSBridgeFunctions(u);
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error calling gonative://nativebridge/multi", e);
+                }
+            } else if("/custom".equals(uri.getPath())) {
+                if(jsonData == null) return;
+                Map<String, String> params = new HashMap<String, String>();
+                // map to json
+                for (Iterator<String> it = jsonData.keys(); it.hasNext(); ) {
+                    String parameterName = it.next();
+                    String parameter = jsonData.optString(parameterName);
+                    params.put(parameterName, parameter);
+                }
+
+                // execute code defined by the CustomCodeHandler
+                // call JsCustomCodeExecutor#setHandler to override this default handler
+                JSONObject data = JsCustomCodeExecutor.execute(params);
+
+                String callback = params.get("callback");
+                if(callback != null && !callback.isEmpty()) {
+                    final String js = LeanUtils.createJsForCallback(callback, data);
+                    // run on main thread
+                    Handler mainHandler = new Handler(mainActivity.getMainLooper());
+                    mainHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            mainActivity.runJavascript(js);
+                        }
+                    });
+                }
+            }
+            return;
+        }
+
+        // settings
+        if ("open".equals(uri.getHost())) {
+            if ("/app-settings".equals(uri.getPath())) {
+                try {
+                    Intent settingsIntent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                    Uri appUri = Uri.fromParts("package", mainActivity.getPackageName(), null);
+                    settingsIntent.setData(appUri);
+                    mainActivity.startActivity(settingsIntent);
+                } catch (Exception e) {
+                    Log.e(TAG, "Error opening app settings", e);
+                }
+            }
+            return;
+        }
+
+        if ("webview".equals(uri.getHost())) {
+            if ("/clearCache".equals(uri.getPath())) {
+                Log.d(TAG, "Clearing webview cache");
+                mainActivity.clearWebviewCache();
+            }
+            return;
+        }
+
+        if ("run".equals(uri.getHost())) {
+            if ("/gonative_device_info".equals(uri.getPath())) {
+                String callback = "gonative_device_info";
+                if(jsonData != null){
+                    callback = jsonData.optString("callback", "gonative_device_info");
+                }
+                runGonativeDeviceInfo(callback);
+            }
+        }
+
+        if ("geoLocation".equals(uri.getHost())) {
+            if ("/promptAndroidLocationServices".equals(uri.getPath())) {
+                if (isLocationServiceEnabled()) return;
+
+                new AlertDialog.Builder(mainActivity)
+                        .setMessage(R.string.location_services_not_enabled)
+                        .setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialogInterface, int i) {
+                                mainActivity.startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
+                            }
+                        })
+                        .setNegativeButton(R.string.no_thanks, null)
+                        .show();
+            }
+            return;
+        }
+
+        if ("config".equals(uri.getHost()) && jsonData != null) {
+            if ("/set".equals(uri.getPath())) {
+                String initialUrl = jsonData.optString("initialUrl");
+                if (!initialUrl.isEmpty()) {
+                    appConfig.setInitialUrl(initialUrl, true);
+                }
+            }
+            return;
+        }
+
+        if ("screen".equals(uri.getHost())) {
+            if ("/setBrightness".equals(uri.getPath())) {
+                if(jsonData == null) return;
+                String brightnessString = jsonData.optString("brightness");
+                if (brightnessString.isEmpty()) {
+                    Log.e(TAG, "Brightness not specified in " + uri.toString());
+                    return;
+                }
+
+                if (brightnessString.equals("default")) {
+                    mainActivity.setBrightness(-1);
+                    restoreBrightnessOnNavigation = false;
+                    return;
+                }
+
+                try {
+                    float newBrightness = Float.parseFloat(brightnessString);
+                    if (newBrightness < 0 || newBrightness > 1.0) {
+                        Log.e(TAG, "Invalid brightness value in " + uri.toString());
+                        return;
+                    }
+                    mainActivity.setBrightness(newBrightness);
+                    String restoreString = jsonData.optString("restoreOnNavigation");
+                    if ("true".equals(restoreString) || "1".equals(restoreString)) {
+                        this.restoreBrightnessOnNavigation = true;
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error parsing brightness", e);
+                }
+            }
+            else if("/fullscreen".equals(uri.getPath())) {
+                mainActivity.toggleFullscreen(true);
+            } else if("/normal".equals(uri.getPath())){
+                mainActivity.toggleFullscreen(false);
+            } else if("/keepScreenOn".equals(uri.getPath())){
+                mainActivity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            } else if("/keepScreenNormal".equals(uri.getPath())){
+                mainActivity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            }
+            return;
+        }
+
+        if ("navigationMaxWindows".equals(uri.getHost())) {
+            if ("/set".equals(uri.getPath()) && jsonData != null) {
+                int maxWindow = jsonData.optInt("data");
+                boolean persist = jsonData.optBoolean("persist");
+                appConfig.setMaxWindows(maxWindow, persist);
+            }
+            return;
+        }
+
+        if ("navigationTitles".equals(uri.getHost()) && jsonData != null) {
+            if ("/set".equals(uri.getPath())) {
+                boolean persist = jsonData.optBoolean("persist");
+                JSONObject data = jsonData.optJSONObject("data");
+                try {
+                    if(data == null){ // convert string to json from url
+                        data = new JSONObject(jsonData.optString("data"));
+                    }
+                }catch (JSONException e){
+                    Log.e(TAG, "GoNative Navigation Titles JSONException:- " + e.getMessage());
+                    return;
+                }
+                appConfig.setNavigationTitles(data, persist);
+            } else if ("/setCurrent".equals(uri.getPath())) {
+                String title = jsonData.optString("title");
+                if (!title.isEmpty()) {
+                    mainActivity.setTitle(title);
+                } else {
+                    mainActivity.setTitle(R.string.app_name);
+                }
+            }
+            return;
+        }
+
+        if ("navigationLevels".equals(uri.getHost()) && jsonData != null) {
+            if ("/set".equals(uri.getPath())) {
+                boolean persist = jsonData.optBoolean("persist");
+                JSONObject data = jsonData.optJSONObject("data");
+                try {
+                    if(data == null){ // convert string to json from url
+                        data = new JSONObject(jsonData.optString("data"));
+                    }
+                }catch (JSONException e){
+                    Log.e(TAG, "GoNative Navigation Levels JSONException:- " + e.getMessage());
+                    return;
+                }
+                appConfig.setNavigationLevels(data, persist);
+            }
+            return;
+        }
+
+        if ("sidebar".equals(uri.getHost())) {
+            if ("/setItems".equals(uri.getPath()) && jsonData != null) {
+                Object items = jsonData.optJSONArray("items");
+                if(items == null){
+                    String itemsString = jsonData.optString("items");
+                    if (!itemsString.isEmpty()) {
+                        try {
+                            items = new JSONTokener(itemsString).nextValue();
+                        } catch (JSONException e) {
+                            Log.d(TAG, "GoNative sidebar error: items is not JSON object");
+                            return;
+                        }
+                    }
+                }
+                boolean enabled = jsonData.optBoolean("enabled", true);
+                if (jsonData.has("persist")) {
+                    boolean persist = jsonData.optBoolean("persist", false);
+                    AppConfig.getInstance(this.mainActivity).setSidebarNavigation(items, enabled, persist);
+                } else {
+                    AppConfig.getInstance(this.mainActivity).setSidebarNavigation(items);
+                }
+                this.mainActivity.setSidebarNavigationEnabled(enabled);
+            }
+            return;
+        }
+
+        if ("share".equals(uri.getHost()) && jsonData != null) {
+            String urlString = jsonData.optString("url");
+            if ("/sharePage".equals(uri.getPath())) {
+                this.mainActivity.sharePage(urlString);
+            } else if ("/downloadFile".equals(uri.getPath()) && !urlString.isEmpty()) {
+                this.mainActivity.getFileDownloader().onDownloadStart(urlString, null, null, null, -1);
+            }
+
+            return;
+        }
+
+        if ("tabs".equals(uri.getHost())) {
+            TabManager tabManager = this.mainActivity.getTabManager();
+            if (tabManager == null) return;
+
+            if (uri.getPath().startsWith("/select/")) {
+                List<String> segments = uri.getPathSegments();
+                if (segments.size() == 2) {
+                    String tabNumberString = segments.get(1);
+                    try {
+                        int tabNumber = Integer.parseInt(tabNumberString);
+                        if (tabNumber >= 0) {
+                            tabManager.selectTabNumber(tabNumber);
+                        }
+                    } catch (NumberFormatException e) {
+                        Log.e(TAG, "Invalid tab number " + tabNumberString, e);
+                        return;
+                    }
+
+                }
+            } else if ("/deselect".equals(uri.getPath())) {
+                mainActivity.deselectTabs();
+            } else if ("/setTabs".equals(uri.getPath()) && jsonData != null) {
+                JSONObject tabsConfig = jsonData.optJSONObject("tabs");
+                if(tabsConfig == null){
+                    try {
+                        tabsConfig = new JSONObject(jsonData.optString("tabs"));
+                    } catch (JSONException e) {
+                        Log.e(TAG, "GoNative Tabs JSONException", e);
+                        return;
+                    }
+                }
+                tabManager.setTabsWithJson(tabsConfig);
+            }
+
+            return;
+        }
+
+        if ("connectivity".equals(uri.getHost())) {
+            if ("/get".equals(uri.getPath())) {
+                if(jsonData != null && !jsonData.optString("callback").isEmpty()){
+                    this.mainActivity.sendConnectivityOnce(jsonData.optString("callback"));
+                }
+            } else if ("/subscribe".equals(uri.getPath())) {
+                if(jsonData != null && !jsonData.optString("callback").isEmpty()){
+                    this.mainActivity.subscribeConnectivity(jsonData.optString("callback"));
+                }
+            } else if ("/unsubscribe".equals(uri.getPath())) {
+                this.mainActivity.unsubscribeConnectivity();
+            }
+        }
+
+        if ("audio".equals(uri.getHost())) {
+            if ("/requestFocus".equals(uri.getPath()) && appConfig.enableWebRTCBluetoothAudio && jsonData != null) {
+                boolean requestFocusEnabled = jsonData.optBoolean("enabled", true);
+                if (requestFocusEnabled) {
+                    AudioUtils.requestAudioFocus(mainActivity);
+                } else {
+                    AudioUtils.abandonFocusRequest(mainActivity);
+                }
+            }
+            return;
+        }
+
+        if ("statusbar".equals(uri.getHost())) {
+            if ("/set".equals(uri.getPath()) && jsonData != null) {
+                String style = jsonData.optString("style");
+                if (!style.isEmpty() && Build.VERSION.SDK_INT >= 23) {
+                    if (style.equals("light")) {
+                        // light icons and text
+                        View decor = this.mainActivity.getWindow().getDecorView();
+                        decor.setSystemUiVisibility(decor.getSystemUiVisibility() & ~ View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+                    } else if (style.equals("dark")) {
+                        // dark icons and text
+                        View decor = this.mainActivity.getWindow().getDecorView();
+                        decor.setSystemUiVisibility(decor.getSystemUiVisibility() | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+                    }
+                }
+
+                String color = jsonData.optString("color");
+                Integer parsedColor = LeanUtils.parseColor(color);
+                if (parsedColor != null && Build.VERSION.SDK_INT >= 21) {
+                    this.mainActivity.getWindow().setStatusBarColor(parsedColor);
+                }
+
+                boolean overlay = jsonData.optBoolean("overlay");
+                View decor = this.mainActivity.getWindow().getDecorView();
+                if (overlay) {
+                    decor.setSystemUiVisibility(decor.getSystemUiVisibility() |
+                            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                            View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+                } else {
+                    decor.setSystemUiVisibility(decor.getSystemUiVisibility() &
+                            ~View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN &
+                            ~View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+                }
+            }
+            return;
+        }
+    
+        if ("internalExternal".equals(uri.getHost())) {
+            if ("/set".equals(uri.getPath())) {
+                if (jsonData == null || jsonData.length() == 0) {
+                    // Reset
+                    appConfig.setRegexInternalExternal(null);
+                } else {
+                    try {
+                        JSONArray rules = jsonData.optJSONArray("rules");
+                        if (rules == null || rules.length() == 0) {
+                            appConfig.setRegexInternalExternal(null);
+                            return;
+                        }
+                        // Validate rules JSON structure
+                        for (int i = 0; i < rules.length(); i++) {
+                            JSONObject obj = rules.getJSONObject(i);
+                            // Check if object has "regex" field, return error if not
+                            if (TextUtils.isEmpty(obj.optString("regex"))) {
+                                Log.e(TAG, "handleJSBridgeFunctions: internalExternal/set format error, missing field");
+                                return;
+                            }
+                            // Check if object has "internal" field, will cause JSONException if field is missing or if value is not boolean
+                            obj.getBoolean("internal");
+                        }
+                        appConfig.setRegexInternalExternal(rules);
+                    } catch (JSONException e) {
+                        Log.e(TAG, "handleJSBridgeFunctions: internalExternal/set parse error", e);
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+
+    }
+
     public boolean shouldOverrideUrlLoading(GoNativeWebviewInterface view, String url) {
         return shouldOverrideUrlLoading(view, url, false);
     }
@@ -150,6 +583,8 @@ public class UrlNavigation {
 
         // return if loading from local assets
         if (url.startsWith(ASSET_URL)) return false;
+
+        if (url.startsWith("blob:")) return false;
 
         view.setCheckLoginSignup(true);
 
@@ -167,7 +602,7 @@ public class UrlNavigation {
                     if (entry == null) continue;
 
                     String command = entry.optString("command");
-                    if (command == null) continue;
+                    if (command.isEmpty()) continue;
 
                     if (command.equals("pop")) {
                         if (mainActivity.isNotRoot()) mainActivity.finish();
@@ -192,409 +627,8 @@ public class UrlNavigation {
             return true;
         }
 
-        if ("gonative".equals(uri.getScheme()) && "registration".equals(uri.getHost()) &&
-                "/send".equals(uri.getPath())) {
-
-            RegistrationManager registrationManager = ((GoNativeApplication) mainActivity.getApplication()).getRegistrationManager();
-            String customDataString = uri.getQueryParameter("customData");
-            if (customDataString != null) {
-                try {
-                    JSONObject customData = new JSONObject(customDataString);
-                    registrationManager.setCustomData(customData);
-                    registrationManager.sendToAllEndpoints();
-                } catch (JSONException e) {
-                    Log.d(TAG, "Gonative registration error: customData is not JSON object");
-                }
-            } else {
-                registrationManager.sendToAllEndpoints();
-            }
-
-            return true;
-        }
-
-        if ("gonative".equals(uri.getScheme())) {
-            if ("nativebridge".equals(uri.getHost())) {
-                if ("/multi".equals(uri.getPath())) {
-                    String data = uri.getQueryParameter("data");
-                    if (data == null) return true;
-                    try {
-                        JSONObject json = new JSONObject(data);
-                        JSONArray urls = json.getJSONArray("urls");
-                        for (int i = 0; i < urls.length(); i++) {
-                            String s = urls.getString(i);
-                            Uri u = Uri.parse(s);
-                            if (!"gonative".equals(u.getScheme())) continue;
-                            shouldOverrideUrlLoadingNoIntercept(view, s, noAction);
-                        }
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error calling gonative://nativebridge/multi", e);
-                    }
-                }
-                return true;
-            }
-
-            // settings
-            if ("open".equals(uri.getHost())) {
-                if ("/app-settings".equals(uri.getPath())) {
-                    try {
-                        Intent settingsIntent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
-                        Uri appUri = Uri.fromParts("package", mainActivity.getPackageName(), null);
-                        settingsIntent.setData(appUri);
-                        mainActivity.startActivity(settingsIntent);
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error opening app settings", e);
-                    }
-                }
-                return true;
-            }
-
-            if ("webview".equals(uri.getHost())) {
-                if ("/clearCache".equals(uri.getPath())) {
-                    Log.d(TAG, "Clearing webview cache");
-                    mainActivity.clearWebviewCache();
-                }
-                return true;
-            }
-
-            if ("run".equals(uri.getHost())) {
-                if ("/gonative_device_info".equals(uri.getPath())) {
-                    runGonativeDeviceInfo();
-                } else if ("/gonative_onesignal_info".equals(uri.getPath())) {
-                    mainActivity.sendOneSignalInfo();
-                }
-            }
-
-            if ("geoLocation".equals(uri.getHost())) {
-                if ("/promptAndroidLocationServices".equals(uri.getPath())) {
-                    if (isLocationServiceEnabled()) return true;
-
-                    new AlertDialog.Builder(mainActivity)
-                            .setMessage(R.string.location_services_not_enabled)
-                            .setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
-                                @Override
-                                public void onClick(DialogInterface dialogInterface, int i) {
-                                    mainActivity.startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
-                                }
-                            })
-                            .setNegativeButton(R.string.no_thanks, null)
-                            .show();
-                }
-                return true;
-            }
-
-            if ("config".equals(uri.getHost())) {
-                ConfigPreferences configPreferences = new ConfigPreferences(this.mainActivity);
-                configPreferences.handleUrl(uri);
-                return true;
-            }
-
-            if ("screen".equals(uri.getHost())) {
-                if ("/setBrightness".equals(uri.getPath())) {
-                    String brightnessString = uri.getQueryParameter("brightness");
-                    if (brightnessString == null) {
-                        Log.e(TAG, "Brightness not specified in " + uri.toString());
-                        return true;
-                    }
-
-                    if (brightnessString.equals("default")) {
-                        mainActivity.setBrightness(-1);
-                        restoreBrightnessOnNavigation = false;
-                        return true;
-                    }
-
-                    try {
-                        float newBrightness = Float.parseFloat(brightnessString);
-                        if (newBrightness < 0 || newBrightness > 1.0) {
-                            Log.e(TAG, "Invalid brightness value in " + uri.toString());
-                            return true;
-                        }
-                        mainActivity.setBrightness(newBrightness);
-                        String restoreString = uri.getQueryParameter("restoreOnNavigation");
-                        if ("true".equals(restoreString) || "1".equals(restoreString)) {
-                            this.restoreBrightnessOnNavigation = true;
-                        }
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error parsing brightness", e);
-
-                    }
-                }
-                return true;
-            }
-
-            if ("navigationTitles".equals(uri.getHost())) {
-                if ("/set".equals(uri.getPath())) {
-                    String dataString = uri.getQueryParameter("data");
-                    String persistString = uri.getQueryParameter("persist");
-                    boolean persist = "1".equals(persistString) || "true".equals(persistString);
-
-                    if (dataString != null && !dataString.isEmpty()) {
-                        try {
-                            JSONObject data = new JSONObject(dataString);
-                            appConfig.setNavigationTitles(data, persist);
-                        } catch (JSONException e) {
-                            Log.e(TAG, "Error parsing navigationTitles", e);
-                        }
-
-                    } else {
-                        appConfig.setNavigationTitles(null, persist);
-                    }
-                } else if ("/setCurrent".equals(uri.getPath())) {
-                    String title = uri.getQueryParameter("title");
-                    if (title != null) {
-                        mainActivity.setTitle(title);
-                    } else {
-                        mainActivity.setTitle(R.string.app_name);
-                    }
-                }
-                return true;
-            }
-
-            if ("navigationLevels".equals(uri.getHost())) {
-                if ("/set".equals(uri.getPath())) {
-                    String dataString = uri.getQueryParameter("data");
-                    String persistString = uri.getQueryParameter("persist");
-                    boolean persist = "1".equals(persistString) || "true".equals(persistString);
-
-                    if (dataString != null && !dataString.isEmpty()) {
-                        try {
-                            JSONObject data = new JSONObject(dataString);
-                            appConfig.setNavigationLevels(data, persist);
-                        } catch (JSONException e) {
-                            Log.e(TAG, "Error parsing navigationLevels", e);
-                        }
-                    } else {
-                        appConfig.setNavigationLevels(null, persist);
-                    }
-                }
-                return true;
-            }
-
-            if ("sidebar".equals(uri.getHost())) {
-                if ("/setItems".equals(uri.getPath())) {
-                    String itemsString = uri.getQueryParameter("items");
-                    if (itemsString != null) {
-                        try {
-                            Object items = new JSONTokener(itemsString).nextValue();
-                            AppConfig.getInstance(this.mainActivity).setSidebarNavigation(items);
-                        } catch (JSONException e) {
-                            Log.d(TAG, "Gonative registration error: customData is not JSON object");
-                        }
-                    }
-                }
-                return true;
-            }
-
-            if ("share".equals(uri.getHost())) {
-                String urlString = uri.getQueryParameter("url");
-                if ("/sharePage".equals(uri.getPath())) {
-                    this.mainActivity.sharePage(urlString);
-                } else if ("/downloadFile".equals(uri.getPath()) && urlString != null) {
-                    this.mainActivity.getFileDownloader().onDownloadStart(urlString, null, null, null, -1);
-                }
-
-                return true;
-            }
-
-            if ("tabs".equals(uri.getHost())) {
-                TabManager tabManager = this.mainActivity.getTabManager();
-                if (tabManager == null) return true;
-
-                if (uri.getPath().startsWith("/select/")) {
-                    List<String> segments = uri.getPathSegments();
-                    if (segments.size() == 2) {
-                        String tabNumberString = segments.get(1);
-                        try {
-                            int tabNumber = Integer.parseInt(tabNumberString);
-                            if (tabNumber >= 0) {
-                                tabManager.selectTabNumber(tabNumber);
-                            }
-                        } catch (NumberFormatException e) {
-                            Log.e(TAG, "Invalid tab number " + tabNumberString, e);
-                            return true;
-                        }
-
-                    }
-                } else if ("/deselect".equals(uri.getPath())) {
-                    mainActivity.deselectTabs();
-                } else if ("/setTabs".equals(uri.getPath())) {
-                    String tabsJson = uri.getQueryParameter("tabs");
-                    if (tabsJson != null && !tabsJson.isEmpty()) {
-                        tabManager.setTabsWithJson(tabsJson);
-                    }
-                }
-
-                return true;
-            }
-
-            if ("facebook".equals(uri.getHost())) {
-                if (!appConfig.facebookEnabled) return true;
-
-                boolean isPurchase = "/events/sendPurchase".equals(uri.getPath());
-                if (isPurchase || "/events/send".equals(uri.getPath())) {
-                    String dataString = uri.getQueryParameter("data");
-                    if (dataString == null || dataString.isEmpty()) return true;
-
-                    try {
-                        JSONObject data = new JSONObject(dataString);
-
-                        Bundle params = null;
-                        JSONObject parameters = data.optJSONObject("parameters");
-                        if (parameters != null) {
-                            params = LeanUtils.jsonObjectToBundle(parameters);
-                        }
-
-                        if (!isPurchase) {
-                            String eventName = LeanUtils.optString(data, "event");
-                            if (eventName == null) return true;
-
-                            double valueToSum = data.optDouble("valueToSum");
-
-                            AppEventsLogger logger = AppEventsLogger.newLogger(mainActivity);
-                            if (Double.isNaN(valueToSum)) {
-                                logger.logEvent(eventName, params);
-                            } else {
-                                logger.logEvent(eventName, valueToSum, params);
-                            }
-                        } else {
-                            // isPurchase
-                            double purchaseAmount = data.optDouble("purchaseAmount");
-                            if (Double.isNaN(purchaseAmount)) return true;
-                            String currencyString = LeanUtils.optString(data, "currency");
-                            if (currencyString == null) return true;
-                            Currency currency = Currency.getInstance(currencyString);
-
-                            AppEventsLogger logger = AppEventsLogger.newLogger(mainActivity);
-                            logger.logPurchase(BigDecimal.valueOf(purchaseAmount), currency, params);
-                        }
-                    } catch (JSONException e) {
-                        Log.e(TAG, "Error parsing json for facebook event", e);
-                    } catch (IllegalArgumentException e) {
-                        Log.e(TAG, "Error creating facebook app event", e);
-                    }
-                }
-
-                return true;
-            }
-
-            if ("onesignal".equals(uri.getHost())) {
-                if ("/tags/get".equals(uri.getPath())) {
-                    final String callback = uri.getQueryParameter("callback");
-                    if (callback == null || callback.isEmpty()) return true;
-
-                    OneSignal.getTags(new OneSignal.GetTagsHandler() {
-                        @Override
-                        public void tagsAvailable(JSONObject tags) {
-                            JSONObject results = new JSONObject();
-                            try {
-                                results.put("success", true);
-                                if (tags != null) {
-                                    results.put("tags", tags);
-                                }
-                                final String js = LeanUtils.createJsForCallback(callback, results);
-                                // run on main thread
-                                Handler mainHandler = new Handler(mainActivity.getMainLooper());
-                                mainHandler.post(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        mainActivity.runJavascript(js);
-                                    }
-                                });
-                            } catch (JSONException e) {
-                                Log.e(TAG, "Error json encoding tags", e);
-                            }
-                        }
-                    });
-
-                    return true;
-                }
-
-                if ("/tags/set".equals(uri.getPath())) {
-                    String tagsString = uri.getQueryParameter("tags");
-                    if (tagsString == null || tagsString.isEmpty()) return true;
-
-                    try {
-                        JSONObject tags = new JSONObject(tagsString);
-                        OneSignal.sendTags(tags);
-                    } catch (JSONException e) {
-                        Log.e(TAG, "Error parsing tags JSON", e);
-                    }
-                    return true;
-                }
-
-                if ("/promptLocation".equals(uri.getPath())) {
-                    OneSignal.promptLocation();
-                    return true;
-                }
-
-                if ("/userPrivacyConsent/grant".equals(uri.getPath())) {
-                    OneSignal.provideUserConsent(true);
-                    return true;
-                }
-
-                if ("/userPrivacyConsent/revoke".equals(uri.getPath())) {
-                    OneSignal.provideUserConsent(false);
-                    return true;
-                }
-
-                if ("/showTagsUI".equals(uri.getPath())) {
-                    Intent intent = new Intent(mainActivity, SubscriptionsActivity.class);
-                    mainActivity.startActivity(intent);
-                }
-            }
-
-            if ("connectivity".equals(uri.getHost())) {
-                String callback = uri.getQueryParameter("callback");
-                if ("/get".equals(uri.getPath())) {
-                    if (callback != null && !callback.isEmpty()) {
-                        this.mainActivity.sendConnectivityOnce(callback);
-                    }
-                } else if ("/subscribe".equals(uri.getPath())) {
-                    if (callback != null && !callback.isEmpty()) {
-                        this.mainActivity.subscribeConnectivity(callback);
-                    }
-                } else if ("/unsubscribe".equals(uri.getPath())) {
-                    this.mainActivity.unsubscribeConnectivity();
-                }
-            }
-
-            if ("statusbar".equals(uri.getHost())) {
-                if ("/set".equals(uri.getPath())) {
-                    String style = uri.getQueryParameter("style");
-                    if (style != null && !style.isEmpty() && Build.VERSION.SDK_INT >= 23) {
-                        if (style.equals("light")) {
-                            // light icons and text
-                            View decor = this.mainActivity.getWindow().getDecorView();
-                            decor.setSystemUiVisibility(decor.getSystemUiVisibility() & ~ View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
-                        } else if (style.equals("dark")) {
-                            // dark icons and text
-                            View decor = this.mainActivity.getWindow().getDecorView();
-                            decor.setSystemUiVisibility(decor.getSystemUiVisibility() | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
-                        }
-                    }
-
-                    String color = uri.getQueryParameter("color");
-                    Integer parsedColor = LeanUtils.parseColor(color);
-                    if (parsedColor != null && Build.VERSION.SDK_INT >= 21) {
-                        this.mainActivity.getWindow().setStatusBarColor(parsedColor);
-                    }
-
-                    String overlay = uri.getQueryParameter("overlay");
-                    if (overlay != null) {
-                        if (overlay.equals("true") || overlay.equals("1")) {
-                            View decor = this.mainActivity.getWindow().getDecorView();
-                            decor.setSystemUiVisibility(decor.getSystemUiVisibility() |
-                                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-                        } else {
-                            View decor = this.mainActivity.getWindow().getDecorView();
-                            decor.setSystemUiVisibility(decor.getSystemUiVisibility() &
-                                    ~View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN &
-                                    ~View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-                        }
-                    }
-                }
-            }
-
+        if("gonative".equals(uri.getScheme())){
+            handleJSBridgeFunctions(uri);
             return true;
         }
 
@@ -643,6 +677,12 @@ public class UrlNavigation {
         if (currentLevel >= 0 && newLevel >= 0) {
             if (newLevel > currentLevel) {
                 if (noAction) return true;
+
+                if (appConfig.maxWindows > 0 && mainActivity.getWebViewCount() > appConfig.maxWindows) {
+                    mainActivity.setRemoveExcessWebView(true);
+                    LocalBroadcastManager.getInstance(mainActivity)
+                            .sendBroadcast(new Intent(MainActivity.BROADCAST_RECEIVER_ACTION_WEBVIEW_LIMIT_REACHED));
+                }
 
                 // new activity
                 Intent intent = new Intent(mainActivity.getBaseContext(), MainActivity.class);
@@ -850,9 +890,14 @@ public class UrlNavigation {
 
         UrlInspector.getInstance().inspectUrl(url);
 
-		Uri uri = Uri.parse(url);		
+		Uri uri = Uri.parse(url);
 		if (isInternalUri(uri)){
-            CookieSyncManager.getInstance().sync();
+            AsyncTask.THREAD_POOL_EXECUTOR.execute(new Runnable() {
+                @Override
+                public void run() {
+                    CookieManager.getInstance().flush();
+                }
+            });
 		}
 
         if (appConfig.loginDetectionUrl != null) {
@@ -883,7 +928,7 @@ public class UrlNavigation {
             mainActivity.postLoadJavascript = null;
             mainActivity.runJavascript(js);
         }
-		
+
         // send broadcast message
         LocalBroadcastManager.getInstance(mainActivity).sendBroadcast(new Intent(UrlNavigation.FINISHED_LOADING_MESSAGE));
 
@@ -894,15 +939,36 @@ public class UrlNavigation {
 
         // send installation info
         if (doNativeBridge) {
-            runGonativeDeviceInfo();
+            runGonativeDeviceInfo("gonative_device_info");
         }
-	}
+        injectJSBridgeLibrary();
+
+        ((GoNativeApplication) mainActivity.getApplication()).mBridge.onPageFinish(mainActivity, doNativeBridge);
+    }
+
+    private void injectJSBridgeLibrary(){
+        if(!LeanUtils.checkNativeBridgeUrls(currentWebviewUrl,mainActivity)) return;
+        try {
+            if(JSBridgeScript == null) {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                InputStream is = new BufferedInputStream(mainActivity.getAssets().open("GoNativeJSBridgeLibrary.js"));
+                IOUtils.copy(is, baos);
+                JSBridgeScript = baos.toString();
+            }
+            mainActivity.runJavascript(JSBridgeScript);
+            ((GoNativeApplication) mainActivity.getApplication()).mBridge.injectJSLibraries(mainActivity);
+            // call the user created function that needs library access on page finished.
+            mainActivity.runJavascript(LeanUtils.createJsForCallback("gonative_library_ready", null));
+        } catch (Exception e) {
+            Log.d(TAG, "GoNative JSBridgeLibrary Injection Error:- " + e.getMessage());
+        }
+    }
 
     public void onFormResubmission(GoNativeWebviewInterface view, Message dontResend, Message resend) {
         resend.sendToTarget();
     }
 
-	private void runGonativeDeviceInfo() {
+	private void runGonativeDeviceInfo(String callback) {
         Map<String, Object> installationInfo = Installation.getInfo(mainActivity);
         SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(mainActivity);
         if (!sharedPreferences.getBoolean("hasLaunched", false)) {
@@ -913,7 +979,7 @@ public class UrlNavigation {
         }
 
         JSONObject jsonObject = new JSONObject(installationInfo);
-        String js = LeanUtils.createJsForCallback("gonative_device_info", jsonObject);
+        String js = LeanUtils.createJsForCallback(callback, jsonObject);
         mainActivity.runJavascript(js);
     }
 
@@ -927,7 +993,7 @@ public class UrlNavigation {
             mainActivity.addToHistory(url);
         }
     }
-	
+
 	public void onReceivedError(final GoNativeWebviewInterface view,
                                 @SuppressWarnings("unused") int errorCode,
                                 String errorDescription, String failingUrl){
@@ -1024,12 +1090,7 @@ public class UrlNavigation {
     }
 
     public boolean chooseFileUpload(final String[] mimetypespec, final boolean multiple) {
-        mainActivity.getPermission(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, new MainActivity.PermissionCallback() {
-            @Override
-            public void onPermissionResult(String[] permissions, int[] grantResults) {
-                chooseFileUploadAfterPermission(mimetypespec, multiple);
-            }
-        });
+        mainActivity.getPermission(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE}, (permissions, grantResults) -> chooseFileUploadAfterPermission(mimetypespec, multiple));
         return true;
     }
 
@@ -1074,11 +1135,22 @@ public class UrlNavigation {
         if (useCamera) {
             String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
             String imageFileName = "IMG_" + timeStamp + ".jpg";
-            File storageDir = Environment.getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_PICTURES);
-            File captureFile = new File(storageDir, imageFileName);
 
-            Uri captureUrl = Uri.fromFile(captureFile);
+            Uri captureUrl = null;
+            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
+                ContentResolver resolver = mainActivity.getContentResolver();
+                ContentValues contentValues = new ContentValues();
+                contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, imageFileName);
+                contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/*");
+                contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES);
+
+                captureUrl = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues);
+            }else {
+                File storageDir = Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_PICTURES);
+                File captureFile = new File(storageDir, imageFileName);
+                captureUrl = Uri.fromFile(captureFile);
+            }
 
             if (captureUrl != null) {
                 Intent captureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
@@ -1088,7 +1160,7 @@ public class UrlNavigation {
                     Intent intent = new Intent(captureIntent);
                     intent.setComponent(new ComponentName(resolve.activityInfo.packageName, resolve.activityInfo.name));
                     intent.setPackage(packageName);
-                    intent.putExtra(MediaStore.EXTRA_OUTPUT, Uri.fromFile(captureFile));
+                    intent.putExtra(MediaStore.EXTRA_OUTPUT, captureUrl);
                     mainActivity.setDirectUploadImageUri(captureUrl);
                     directCaptureIntents.add(intent);
                 }
@@ -1147,7 +1219,94 @@ public class UrlNavigation {
             return false;
         }
     }
-
+    
+    
+    public boolean openDirectCamera(final String[] mimetypespec, final boolean multiple) {
+        mainActivity.getPermission(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE}, (permissions, grantResults) -> openDirectCameraAfterPermission(mimetypespec, multiple));
+        return true;
+    }
+    
+    /*
+        Directly opens camera if the mime types are images. If not, run existing default process
+     */
+    @SuppressWarnings("UnusedReturnValue")
+    private boolean openDirectCameraAfterPermission(String[] mimetypespec, boolean multiple) {
+        mainActivity.setDirectUploadImageUri(null);
+        
+        Set<String> mimeTypes = new HashSet<>();
+        for (String spec : mimetypespec) {
+            String[] splitSpec = spec.split("[,;\\s]");
+            for (String s : splitSpec) {
+                if (s.startsWith(".")) {
+                    String t = MimeTypeMap.getSingleton().getMimeTypeFromExtension(s.substring(1));
+                    if (t != null) mimeTypes.add(t);
+                } else if (s.contains("/")) {
+                    mimeTypes.add(s);
+                }
+            }
+        }
+        
+        // Checks if mimeTypes is empty. If true, redirect process to existing file chooser
+        if (mimeTypes.isEmpty()) {
+            return chooseFileUploadAfterPermission(mimetypespec, multiple);
+        }
+        
+        if (AppConfig.getInstance(mainActivity).directCameraUploads) {
+            for (String type : mimeTypes) {
+                if (type.equals("image/*") || type.equals("image/jpeg") || type.equals("image/jpg")) {
+                    // Filter types to be just images
+                } else {
+                    
+                    // Redirect process to existing file chooser
+                    return chooseFileUploadAfterPermission(mimetypespec, multiple);
+                }
+            }
+        }
+        
+        PackageManager packageManger = mainActivity.getPackageManager();
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        String imageFileName = "IMG_" + timeStamp + ".jpg";
+        
+        Uri captureUrl = null;
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
+            ContentResolver resolver = mainActivity.getContentResolver();
+            ContentValues contentValues = new ContentValues();
+            contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, imageFileName);
+            contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/*");
+            contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES);
+            captureUrl = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues);
+        } else {
+            File storageDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+            File captureFile = new File(storageDir, imageFileName);
+            captureUrl = Uri.fromFile(captureFile);
+        }
+        
+        Intent captureIntent;
+        if (captureUrl != null) {
+            captureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            List<ResolveInfo> resolveList = packageManger.queryIntentActivities(captureIntent, 0);
+            for (ResolveInfo resolve : resolveList) {
+                String packageName = resolve.activityInfo.packageName;
+                Intent intent = new Intent(captureIntent);
+                intent.setComponent(new ComponentName(resolve.activityInfo.packageName, resolve.activityInfo.name));
+                intent.setPackage(packageName);
+                intent.putExtra(MediaStore.EXTRA_OUTPUT, captureUrl);
+                mainActivity.setDirectUploadImageUri(captureUrl);
+            }
+            
+            try {
+                // Directly open the camera intent with the same Request Result value value
+                mainActivity.startActivityForResult(captureIntent, MainActivity.REQUEST_SELECT_FILE);
+                return true;
+            } catch (ActivityNotFoundException e) {
+                mainActivity.cancelFileUpload();
+                Toast.makeText(mainActivity, R.string.cannot_open_file_chooser, Toast.LENGTH_LONG).show();
+            }
+        }
+        
+        return false;
+    }
+    
     public boolean createNewWindow(Message resultMsg) {
         ((GoNativeApplication)mainActivity.getApplication()).setWebviewMessage(resultMsg);
         return createNewWindow();
@@ -1185,5 +1344,63 @@ public class UrlNavigation {
     protected void onDownloadStart() {
         startLoadTimeout.removeCallbacksAndMessages(null);
         state = WebviewLoadState.STATE_DONE;
+    }
+
+
+    private static class GetKeyTask extends AsyncTask<String, Void, Pair<PrivateKey, X509Certificate[]>> {
+        private Activity activity;
+        private ClientCertRequest request;
+
+        public GetKeyTask(Activity activity, ClientCertRequest request) {
+            this.activity = activity;
+            this.request = request;
+        }
+
+        @Override
+        protected Pair<PrivateKey, X509Certificate[]> doInBackground(String... strings) {
+            String alias = strings[0];
+
+            try {
+                PrivateKey privateKey = KeyChain.getPrivateKey(activity, alias);
+                X509Certificate[] certificates = KeyChain.getCertificateChain(activity, alias);
+                return new Pair<>(privateKey, certificates);
+            } catch (Exception e) {
+                Log.e(TAG, "Erorr getting private key for alias " + alias, e);
+                return null;
+            }
+        }
+
+        @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
+        @Override
+        protected void onPostExecute(Pair<PrivateKey, X509Certificate[]> result) {
+            if (result != null && result.first != null & result.second != null) {
+                request.proceed(result.first, result.second);
+            } else {
+                request.ignore();;
+            }
+        }
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
+    public void onReceivedClientCertRequest(String url, ClientCertRequest request) {
+        Uri uri = Uri.parse(url);
+        KeyChainAliasCallback callback = alias -> {
+            if (alias == null) {
+                request.ignore();
+                return;
+            }
+
+            new GetKeyTask(mainActivity, request).execute(alias);
+        };
+
+        KeyChain.choosePrivateKeyAlias(mainActivity, callback, request.getKeyTypes(), request.getPrincipals(), request.getHost(),
+                request.getPort(), null);
+    }
+    
+    // Cancels scheduled display of offline page after timeout
+    public void cancelLoadTimeout() {
+        if (startLoadTimeout == null && state != WebviewLoadState.STATE_START_LOAD) return;
+        startLoadTimeout.removeCallbacksAndMessages(null);
+        showWebViewImmediately();
     }
 }

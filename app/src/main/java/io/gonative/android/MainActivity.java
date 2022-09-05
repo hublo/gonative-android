@@ -11,30 +11,21 @@ import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
-import android.graphics.Color;
+import android.graphics.PorterDuff;
+import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.hardware.SensorManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
-import androidx.annotation.NonNull;
-import androidx.core.app.ActivityCompat;
-import androidx.fragment.app.DialogFragment;
-import androidx.core.content.ContextCompat;
-import androidx.localbroadcastmanager.content.LocalBroadcastManager;
-import androidx.core.view.GravityCompat;
-import androidx.core.view.ViewCompat;
-import androidx.drawerlayout.widget.DrawerLayout;
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
-import androidx.appcompat.app.ActionBar;
-import androidx.appcompat.app.ActionBarDrawerToggle;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.appcompat.widget.SearchView;
 import android.telephony.PhoneStateListener;
 import android.telephony.SignalStrength;
 import android.telephony.TelephonyManager;
+import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
 import android.view.KeyEvent;
@@ -45,35 +36,43 @@ import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
-import android.webkit.CookieSyncManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
 import android.widget.ExpandableListView;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.RelativeLayout;
 import android.widget.Spinner;
+import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.ActionBar;
+import androidx.appcompat.app.ActionBarDrawerToggle;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.Toolbar;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.core.view.GravityCompat;
+import androidx.fragment.app.DialogFragment;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+import androidx.webkit.WebSettingsCompat;
+import androidx.webkit.WebViewFeature;
+
 import com.aurelhubert.ahbottomnavigation.AHBottomNavigation;
-import com.facebook.applinks.AppLinkData;
-import com.onesignal.OSPermissionSubscriptionState;
-import com.onesignal.OneSignal;
 import com.squareup.seismic.ShakeDetector;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.UnsupportedEncodingException;
 import java.net.CookieHandler;
 import java.net.URISyntaxException;
-import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.Map;
 import java.util.Observable;
 import java.util.Observer;
 import java.util.Stack;
@@ -81,12 +80,19 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import io.gonative.android.library.AppConfig;
+import io.gonative.android.widget.GoNativeDrawerLayout;
+import io.gonative.android.widget.GoNativeSwipeRefreshLayout;
+import io.gonative.android.widget.SwipeHistoryNavigationLayout;
+import io.gonative.gonative_core.GoNativeActivity;
+import io.gonative.gonative_core.GoNativeWebviewInterface;
+import io.gonative.gonative_core.LeanUtils;
 
 public class MainActivity extends AppCompatActivity implements Observer,
-        SwipeRefreshLayout.OnRefreshListener,
-        LeanWebView.OnSwipeListener,
+        GoNativeActivity,
+        GoNativeSwipeRefreshLayout.OnRefreshListener,
         ShakeDetector.Listener,
         ShakeDialogFragment.ShakeDialogListener {
+    public static final String BROADCAST_RECEIVER_ACTION_WEBVIEW_LIMIT_REACHED = "io.gonative.android.MainActivity.Extra.BROADCAST_RECEIVER_ACTION_WEBVIEW_LIMIT_REACHED";
     public static final String webviewCacheSubdir = "webviewAppCache";
     private static final String webviewDatabaseSubdir = "webviewDatabase";
 	private static final String TAG = MainActivity.class.getName();
@@ -99,24 +105,29 @@ public class MainActivity extends AppCompatActivity implements Observer,
     private static final int REQUEST_PERMISSION_GENERIC = 199;
     private static final int REQUEST_WEBFORM = 300;
     public static final int REQUEST_WEB_ACTIVITY = 400;
-    private static final float ACTIONBAR_ELEVATION = 12.0f;
+    public static final int GOOGLE_SIGN_IN = 500;
 
     private GoNativeWebviewInterface mWebview;
     private View webviewOverlay;
     boolean isPoolWebview = false;
     private Stack<String> backHistory = new Stack<>();
     private String initialUrl;
+    private boolean sidebarNavigationEnabled = true;
+
+    private static int webViewCount = 0;
+    private static boolean removeExcessWebView = false;
 
 	private ValueCallback<Uri> mUploadMessage;
     private ValueCallback<Uri[]> uploadMessageLP;
     private Uri directUploadImageUri;
-	private DrawerLayout mDrawerLayout;
+	private GoNativeDrawerLayout mDrawerLayout;
 	private View mDrawerView;
 	private ExpandableListView mDrawerList;
     private ProgressBar mProgress;
     private Dialog splashDialog;
     private boolean splashDismissRequiresForce;
-    private MySwipeRefreshLayout swipeRefresh;
+    private MySwipeRefreshLayout swipeRefreshLayout;
+    private SwipeHistoryNavigationLayout swipeNavLayout;
     private RelativeLayout fullScreenLayout;
     private JsonMenuAdapter menuAdapter = null;
 	private ActionBarDrawerToggle mDrawerToggle;
@@ -133,6 +144,9 @@ public class MainActivity extends AppCompatActivity implements Observer,
     private int urlLevel = -1;
     private int parentUrlLevel = -1;
     private Handler handler = new Handler();
+    private ActionbarManager actionbarManager;
+    private Menu mOptionsMenu;
+
     private Runnable statusChecker = new Runnable() {
         @Override
         public void run() {
@@ -148,13 +162,14 @@ public class MainActivity extends AppCompatActivity implements Observer,
     private ShakeDetector shakeDetector = new ShakeDetector(this);
     private FileDownloader fileDownloader = new FileDownloader(this);
     private FileWriterSharer fileWriterSharer;
+    private GNJSBridgeInterface jsBridgeInterface;
     private boolean startedLoading = false; // document readystate checker
     private LoginManager loginManager;
     private RegistrationManager registrationManager;
     private ConnectivityChangeReceiver connectivityReceiver;
-    private BroadcastReceiver oneSignalStatusChangedReceiver;
     private BroadcastReceiver navigationTitlesChangedReceiver;
     private BroadcastReceiver navigationLevelsChangedReceiver;
+    private BroadcastReceiver webviewLimitReachedReceiver;
     protected String postLoadJavascript;
     protected String postLoadJavascriptForRefresh;
     private Stack<Bundle>previousWebviewStates;
@@ -171,6 +186,10 @@ public class MainActivity extends AppCompatActivity implements Observer,
         final AppConfig appConfig = AppConfig.getInstance(this);
         GoNativeApplication application = (GoNativeApplication)getApplication();
 
+        if(appConfig.androidFullScreen){
+            toggleFullscreen(true);
+        }
+        // must be done AFTER toggleFullScreen to force screen orientation
         setScreenOrientationPreference();
 
         if (appConfig.keepScreenOn) {
@@ -182,7 +201,9 @@ public class MainActivity extends AppCompatActivity implements Observer,
         super.onCreate(savedInstanceState);
 
         isRoot = getIntent().getBooleanExtra("isRoot", true);
+        application.mBridge.onActivityCreate(this, isRoot);
         parentUrlLevel = getIntent().getIntExtra("parentUrlLevel", -1);
+        webViewCount++;
 
         if (isRoot) {
             // Splash screen stuff
@@ -221,13 +242,14 @@ public class MainActivity extends AppCompatActivity implements Observer,
         this.loginManager = application.getLoginManager();
 
         this.fileWriterSharer = new FileWriterSharer(this);
+        this.jsBridgeInterface = new GNJSBridgeInterface(this);
 
         // webview pools
         application.getWebViewPool().init(this);
 
 		cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
 
-        if (isRoot && AppConfig.getInstance(this).showNavigationMenu)
+        if (appConfig.showActionBar || appConfig.showNavigationMenu)
 	    	setContentView(R.layout.activity_gonative);
         else
             setContentView(R.layout.activity_gonative_nonav);
@@ -236,28 +258,75 @@ public class MainActivity extends AppCompatActivity implements Observer,
         mProgress = findViewById(R.id.progress);
         this.fullScreenLayout = findViewById(R.id.fullscreen);
 
-        swipeRefresh = findViewById(R.id.swipe_refresh);
-        swipeRefresh.setEnabled(appConfig.pullToRefresh);
-        swipeRefresh.setOnRefreshListener(this);
-        swipeRefresh.setCanChildScrollUpCallback(new MySwipeRefreshLayout.CanChildScrollUpCallback() {
+        swipeRefreshLayout = findViewById(R.id.swipe_refresh);
+        swipeRefreshLayout.setEnabled(appConfig.pullToRefresh);
+        swipeRefreshLayout.setOnRefreshListener(this);
+        swipeRefreshLayout.setCanChildScrollUpCallback(() -> mWebview.getScrollY() > 0);
+        
+        swipeNavLayout = findViewById(R.id.swipe_history_nav);
+        swipeNavLayout.setEnabled(appConfig.swipeGestures);
+        swipeNavLayout.setSwipeNavListener(new SwipeHistoryNavigationLayout.OnSwipeNavListener() {
             @Override
-            public boolean canSwipeRefreshChildScrollUp() {
-                return mWebview.getScrollY() > 0;
+            public boolean canSwipeLeftEdge() {
+                return canGoBack();
+            }
+    
+            @Override
+            public boolean canSwipeRightEdge() {
+                return canGoForward();
+            }
+    
+            @NonNull
+            @Override
+            public String getGoBackLabel() {
+                return "";
+            }
+    
+            @Override
+            public boolean navigateBack() {
+                if (appConfig.swipeGestures && canGoBack()) {
+                    goBack();
+                    return true;
+                }
+                return false;
+            }
+    
+            @Override
+            public boolean navigateForward() {
+                if (appConfig.swipeGestures && canGoForward()) {
+                    goForward();
+                    return true;
+                }
+                return false;
+            }
+    
+            @Override
+            public void leftSwipeReachesLimit() {
+        
+            }
+    
+            @Override
+            public void rightSwipeReachesLimit() {
+        
+            }
+
+            @Override
+            public boolean isSwipeEnabled() {
+                return appConfig.swipeGestures;
             }
         });
+        
         if (appConfig.pullToRefreshColor != null) {
-            swipeRefresh.setColorSchemeColors(appConfig.pullToRefreshColor);
+            swipeRefreshLayout.setColorSchemeColors(appConfig.pullToRefreshColor);
+            swipeNavLayout.setActiveColor(appConfig.pullToRefreshColor);
         }
 
         this.webviewOverlay = findViewById(R.id.webviewOverlay);
         this.mWebview = findViewById(R.id.webview);
         setupWebview(this.mWebview);
-        if (appConfig.swipeGestures) {
-            this.mWebview.setOnSwipeListener(this);
-        }
 
         // profile picker
-        if (isRoot && AppConfig.getInstance(this).showNavigationMenu) {
+        if (isRoot && (appConfig.showActionBar || appConfig.showNavigationMenu)) {
             Spinner profileSpinner = findViewById(R.id.profile_picker);
             profilePicker = new ProfilePicker(this, profileSpinner);
 
@@ -265,9 +334,6 @@ public class MainActivity extends AppCompatActivity implements Observer,
             new SegmentedController(this, segmentedSpinner);
         }
 
-		// to save webview cookies to permanent storage
-		CookieSyncManager.createInstance(getApplicationContext());
-		
 		// proxy cookie manager for httpUrlConnection (syncs to webview cookies)
         CookieHandler.setDefault(new WebkitCookieManagerProxy());
 
@@ -283,19 +349,44 @@ public class MainActivity extends AppCompatActivity implements Observer,
 
         hideTabs();
 
-        if (!appConfig.showActionBar && getSupportActionBar() != null) {
-            getSupportActionBar().hide();
+        Toolbar toolbar = findViewById(R.id.toolbar);
+        // Add action bar if getSupportActionBar() is null
+        // regardless of appConfig.showActionBar value to setup drawers, sidenav
+        if (getSupportActionBar() == null) {
+            // Set Material Toolbar as Action Bar.
+            setSupportActionBar(toolbar);
+        }
+        // Hide action bar if showActionBar is FALSE and showNavigationMenu is FALSE
+        if (!appConfig.showActionBar && !appConfig.showNavigationMenu && toolbar != null) {
+            toolbar.setVisibility(View.GONE);
+        }
+
+        if (!appConfig.showLogoInSideBar && !appConfig.showAppNameInSideBar) {
+            findViewById(R.id.header_layout).setVisibility(View.GONE);
+        }
+
+        if (!appConfig.showLogoInSideBar) {
+            ImageView appIcon = findViewById(R.id.app_logo);
+            appIcon.setVisibility(View.GONE);
+        }
+        TextView appName = findViewById(R.id.app_name);
+        if (appName != null) {
+            if(appConfig.showAppNameInSideBar) {
+                appName.setText(appConfig.appName);
+            } else {
+                appName.setVisibility(View.INVISIBLE);
+            }
         }
 
         // actions in action bar
         this.actionManager = new ActionManager(this);
+        this.actionbarManager = new ActionbarManager(this, actionManager, isRoot);
 
         Intent intent = getIntent();
         // load url
         String url = getUrlFromIntent(intent);
 
         if (url == null && savedInstanceState != null) url = savedInstanceState.getString("url");
-        if (url == null && isRoot) url = new ConfigPreferences(this).getInitialUrl();
         if (url == null && isRoot) url = appConfig.initialUrl;
         // url from intent (hub and spoke nav)
         if (url == null) url = intent.getStringExtra("url");
@@ -307,38 +398,6 @@ public class MainActivity extends AppCompatActivity implements Observer,
             // no worries, loadUrl will be called when this new web view is passed back to the message
         } else {
             Log.e(TAG, "No url specified for MainActivity");
-        }
-
-        if (isRoot && appConfig.facebookEnabled) {
-            AppLinkData.fetchDeferredAppLinkData(this, new AppLinkData.CompletionHandler() {
-                @Override
-                public void onDeferredAppLinkDataFetched(AppLinkData appLinkData) {
-                    if (appLinkData == null) return;
-                    Uri uri = appLinkData.getTargetUri();
-                    if (uri == null) return;
-                    String url;
-                    if (uri.getScheme().endsWith(".http") || uri.getScheme().endsWith(".https")) {
-                        Uri.Builder builder = uri.buildUpon();
-                        if (uri.getScheme().endsWith(".https")) {
-                            builder.scheme("https");
-                        } else if (uri.getScheme().endsWith(".http")) {
-                            builder.scheme("http");
-                        }
-                        url = builder.build().toString();
-                    } else {
-                        url = uri.toString();
-                    }
-                    if (url != null) {
-                        final String finalUrl = url;
-                        new Handler(MainActivity.this.getMainLooper()).post(new Runnable() {
-                            @Override
-                            public void run() {
-                                mWebview.loadUrl(finalUrl);
-                            }
-                        });
-                    }
-                }
-            });
         }
 
         if (isRoot && appConfig.showNavigationMenu) {
@@ -363,6 +422,7 @@ public class MainActivity extends AppCompatActivity implements Observer,
                 }
             };
             mDrawerLayout.addDrawerListener(mDrawerToggle);
+            mDrawerLayout.setDisableTouch(appConfig.swipeGestures);
 
             setupMenu();
 
@@ -375,8 +435,12 @@ public class MainActivity extends AppCompatActivity implements Observer,
 		if (getSupportActionBar() != null) {
             if (!isRoot || appConfig.showNavigationMenu) {
                 getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+                Drawable backArrow = ContextCompat.getDrawable(this, R.drawable.abc_ic_ab_back_material);
+                backArrow.setColorFilter(AppConfig.getInstance(this).actionbarForegroundColor, PorterDuff.Mode.SRC_ATOP);
+                getSupportActionBar().setHomeAsUpIndicator(backArrow);
             }
-
+            
+            this.actionbarManager.setupActionBar(mDrawerLayout, mDrawerToggle);
             showLogoInActionBar(appConfig.shouldShowNavigationTitleImageForUrl(url));
         }
 
@@ -384,17 +448,6 @@ public class MainActivity extends AppCompatActivity implements Observer,
         if (mDrawerView != null && AppConfig.getInstance(this).sidebarBackgroundColor != null) {
             mDrawerView.setBackgroundColor(AppConfig.getInstance(this).sidebarBackgroundColor);
         }
-
-        this.oneSignalStatusChangedReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                if (GoNativeApplication.ONESIGNAL_STATUS_CHANGED_MESSAGE.equals(intent.getAction())) {
-                    sendOneSignalInfo();
-                }
-            }
-        };
-        LocalBroadcastManager.getInstance(this).registerReceiver(this.oneSignalStatusChangedReceiver,
-                new IntentFilter(GoNativeApplication.ONESIGNAL_STATUS_CHANGED_MESSAGE));
 
         // respond to navigation titles processed
         this.navigationTitlesChangedReceiver = new BroadcastReceiver() {
@@ -428,6 +481,24 @@ public class MainActivity extends AppCompatActivity implements Observer,
         };
         LocalBroadcastManager.getInstance(this).registerReceiver(this.navigationLevelsChangedReceiver,
                 new IntentFilter(AppConfig.PROCESSED_NAVIGATION_LEVELS));
+
+        this.webviewLimitReachedReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (BROADCAST_RECEIVER_ACTION_WEBVIEW_LIMIT_REACHED.equals(intent.getAction())) {
+                    if (!isRoot && removeExcessWebView) {
+                        removeExcessWebView = false;
+                        finish();
+                    }
+                }
+            }
+        };
+        LocalBroadcastManager.getInstance(this).registerReceiver(this.webviewLimitReachedReceiver,
+                new IntentFilter(BROADCAST_RECEIVER_ACTION_WEBVIEW_LIMIT_REACHED));
+
+        application.mBridge.onSendInstallationInfo(this, Installation.getInfo(this), mWebview.getUrl());
+
+        setupAppTheme();
     }
 
     private String getUrlFromIntent(Intent intent) {
@@ -458,8 +529,13 @@ public class MainActivity extends AppCompatActivity implements Observer,
 
     protected void onPause() {
         super.onPause();
+        GoNativeApplication application = (GoNativeApplication)getApplication();
+        application.mBridge.onActivityPause(this);
         stopCheckingReadyStatus();
-        this.mWebview.onPause();
+    
+        if (application.mBridge.pauseWebViewOnActivityPause()) {
+            this.mWebview.onPause();
+        }
 
         // unregister connectivity
         if (this.connectivityReceiver != null) {
@@ -476,14 +552,18 @@ public class MainActivity extends AppCompatActivity implements Observer,
     @Override
     protected void onStart() {
         super.onStart();
-        if (AppConfig.getInstance(this).oneSignalEnabled) {
-            OneSignal.clearOneSignalNotifications();
+        GoNativeApplication application = (GoNativeApplication)getApplication();
+        application.mBridge.onActivityStart(this);
+        if (AppConfig.getInstance(this).enableWebRTCBluetoothAudio) {
+            AudioUtils.initAudioFocusListener(this);
         }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        GoNativeApplication application = (GoNativeApplication)getApplication();
+        application.mBridge.onActivityResume(this);
         this.mWebview.onResume();
 
         retryFailedPage();
@@ -516,6 +596,9 @@ public class MainActivity extends AppCompatActivity implements Observer,
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        GoNativeApplication application = (GoNativeApplication)getApplication();
+        application.mBridge.onActivityDestroy(this);
+        webViewCount--;
 
         // destroy webview
         if (this.mWebview != null) {
@@ -530,15 +613,32 @@ public class MainActivity extends AppCompatActivity implements Observer,
 
         this.loginManager.deleteObserver(this);
 
-        if (this.oneSignalStatusChangedReceiver != null) {
-            LocalBroadcastManager.getInstance(this).unregisterReceiver(this.oneSignalStatusChangedReceiver);
-        }
         if (this.navigationTitlesChangedReceiver != null) {
             LocalBroadcastManager.getInstance(this).unregisterReceiver(this.navigationTitlesChangedReceiver);
         }
         if (this.navigationLevelsChangedReceiver != null) {
             LocalBroadcastManager.getInstance(this).unregisterReceiver(this.navigationLevelsChangedReceiver);
         }
+        if (this.webviewLimitReachedReceiver != null) {
+            LocalBroadcastManager.getInstance(this).unregisterReceiver(this.webviewLimitReachedReceiver);
+        }
+    }
+    
+    @Override
+    public void onSubscriptionChanged() {
+        if (registrationManager == null) return;
+        registrationManager.subscriptionInfoChanged();
+    }
+    
+    @Override
+    public void launchNotificationActivity(String extra) {
+        Intent mainIntent = new Intent(this, MainActivity.class);
+        mainIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        if (extra != null && !extra.isEmpty()) {
+            mainIntent.putExtra(INTENT_TARGET_URL, extra);
+        }
+        
+        startActivity(mainIntent);
     }
 
     private void retryFailedPage() {
@@ -597,23 +697,13 @@ public class MainActivity extends AppCompatActivity implements Observer,
         Toast.makeText(this, R.string.cleared_cache, Toast.LENGTH_SHORT).show();
     }
 
-    @Override
-    public void onSwipeLeft() {
-    }
-
-    @Override
-    public void onSwipeRight() {
-        if (!AppConfig.getInstance(this).swipeGestures) return;
-        if (canGoBack()) {
-            goBack();
-        }
-    }
-
-    private boolean canGoBack() {
+    public boolean canGoBack() {
+        if (this.mWebview == null) return false;
         return this.mWebview.canGoBack();
     }
 
-    private void goBack() {
+    public void goBack() {
+        if (this.mWebview == null) return;
         if (LeanWebView.isCrosswalk()) {
             // not safe to do for non-crosswalk, as we may never get a page finished callback
             // for single-page apps
@@ -621,6 +711,20 @@ public class MainActivity extends AppCompatActivity implements Observer,
         }
 
         this.mWebview.goBack();
+    }
+
+    private boolean canGoForward() {
+        return this.mWebview.canGoForward();
+    }
+
+    private void goForward() {
+        if (LeanWebView.isCrosswalk()) {
+            // not safe to do for non-crosswalk, as we may never get a page finished callback
+            // for single-page apps
+            hideWebview();
+        }
+
+        this.mWebview.goForward();
     }
 
     public void sharePage(String optionalUrl) {
@@ -655,9 +759,9 @@ public class MainActivity extends AppCompatActivity implements Observer,
 
         // log out by clearing all cookies and going to home page
         CookieManager cookieManager = CookieManager.getInstance();
-        cookieManager.removeAllCookie();
-        CookieSyncManager.getInstance().sync();
-
+        cookieManager.removeAllCookies(aBoolean -> Log.d(TAG, "removeAllCookies: onReceiveValue callback: " + aBoolean));
+        AsyncTask.THREAD_POOL_EXECUTOR.execute(() -> CookieManager.getInstance().flush());
+ 
         updateMenu(false);
         this.loginManager.checkLogin();
         this.mWebview.loadUrl(AppConfig.getInstance(this).initialUrl);
@@ -706,7 +810,7 @@ public class MainActivity extends AppCompatActivity implements Observer,
         if (javascript == null) return;
         this.mWebview.runJavascript(javascript);
     }
-	
+
 	public boolean isDisconnected(){
 		NetworkInfo ni = cm.getActiveNetworkInfo();
         return ni == null || !ni.isConnected();
@@ -755,6 +859,9 @@ public class MainActivity extends AppCompatActivity implements Observer,
     }
 
     public void hideWebview() {
+        GoNativeApplication application = (GoNativeApplication)getApplication();
+        application.mBridge.onHideWebview(this);
+
         if (AppConfig.getInstance(this).disableAnimations) return;
 
         this.webviewIsHidden = true;
@@ -828,10 +935,16 @@ public class MainActivity extends AppCompatActivity implements Observer,
 
     private void injectCSSviaJavascript() {
         AppConfig appConfig = AppConfig.getInstance(this);
-        if (appConfig.customCSS == null || appConfig.customCSS.isEmpty()) return;
+        if ((appConfig.customCSS == null || appConfig.customCSS.isEmpty())
+                && (appConfig.androidCustomCSS == null || appConfig.androidCustomCSS.isEmpty())) return;
 
         try {
-            String encoded = Base64.encodeToString(appConfig.customCSS.getBytes("utf-8"), Base64.NO_WRAP);
+            StringBuilder builder = new StringBuilder();
+            if(appConfig.customCSS != null)
+                builder.append(appConfig.customCSS).append(" ");
+            if(appConfig.androidCustomCSS != null)
+                builder.append(appConfig.androidCustomCSS);
+            String encoded = Base64.encodeToString(builder.toString().getBytes("utf-8"), Base64.NO_WRAP);
             String js = "(function() {" +
                     "var parent = document.getElementsByTagName('head').item(0);" +
                     "var style = document.createElement('style');" +
@@ -849,6 +962,7 @@ public class MainActivity extends AppCompatActivity implements Observer,
     public void showLogoInActionBar(boolean show) {
         ActionBar actionBar = getSupportActionBar();
         if (actionBar == null) return;
+        if (this.actionbarManager == null) return;
 
         actionBar.setDisplayOptions(show ? 0 : ActionBar.DISPLAY_SHOW_TITLE, ActionBar.DISPLAY_SHOW_TITLE);
 
@@ -856,18 +970,29 @@ public class MainActivity extends AppCompatActivity implements Observer,
             // disable text title
             actionBar.setDisplayOptions(0, ActionBar.DISPLAY_SHOW_TITLE);
 
-            // why use a custom view and not setDisplayUseLogoEnabled and setLogo?
-            // Because logo doesn't work!
-            actionBar.setDisplayShowCustomEnabled(true);
             if (this.navigationTitleImage == null) {
                 this.navigationTitleImage = new ImageView(this);
                 this.navigationTitleImage.setImageResource(R.drawable.ic_actionbar);
             }
-            actionBar.setCustomView(this.navigationTitleImage);
+            this.actionbarManager.showTitleView(navigationTitleImage);
         } else {
-            actionBar.setDisplayOptions(ActionBar.DISPLAY_SHOW_TITLE, ActionBar.DISPLAY_SHOW_TITLE);
-            actionBar.setDisplayShowCustomEnabled(false);
+            // Show Text
+            showTextActionBarTitle(getTitle());
         }
+    }
+
+    private void showTextActionBarTitle(CharSequence title) {
+        if (this.actionbarManager == null) return;
+
+        TextView textView = new TextView(this);
+        textView.setText(TextUtils.isEmpty(title) ? getTitle() : title);
+        textView.setTextSize(18);
+        textView.setTypeface(null, Typeface.BOLD);
+        textView.setMaxLines(1);
+        textView.setEllipsize(TextUtils.TruncateAt.END);
+        // TODO [merge] : replace with getter method when merged with dark-theme branch
+        textView.setTextColor(AppConfig.getInstance(this).actionbarForegroundColor);
+        this.actionbarManager.showTitleView(textView);
     }
 
 	public void updatePageTitle() {
@@ -911,8 +1036,15 @@ public class MainActivity extends AppCompatActivity implements Observer,
         if (!appConfig.showNavigationMenu) return;
 
         if (mDrawerLayout != null) {
-            mDrawerLayout.setDrawerLockMode(enabled ? DrawerLayout.LOCK_MODE_UNLOCKED :
-                    DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
+            mDrawerLayout.setDrawerLockMode(enabled ? GoNativeDrawerLayout.LOCK_MODE_UNLOCKED :
+                    GoNativeDrawerLayout.LOCK_MODE_LOCKED_CLOSED);
+        }
+
+        if((sidebarNavigationEnabled || appConfig.showActionBar ) && enabled){
+            Toolbar toolbar = findViewById(R.id.toolbar);
+            if (toolbar != null) {
+                toolbar.setVisibility(View.VISIBLE);
+            }
         }
 
         ActionBar actionBar = getSupportActionBar();
@@ -920,9 +1052,9 @@ public class MainActivity extends AppCompatActivity implements Observer,
             actionBar.setDisplayHomeAsUpEnabled(enabled);
         }
     }
-	
+
 	private void setupMenu(){
-        menuAdapter = new JsonMenuAdapter(this);
+        menuAdapter = new JsonMenuAdapter(this, mDrawerList);
         try {
             menuAdapter.update("default");
             mDrawerList.setAdapter(menuAdapter);
@@ -933,29 +1065,41 @@ public class MainActivity extends AppCompatActivity implements Observer,
         mDrawerList.setOnGroupClickListener(menuAdapter);
         mDrawerList.setOnChildClickListener(menuAdapter);
 	}
-	
-	
+
+
 	@Override
 	protected void onPostCreate(Bundle savedInstanceState) {
 		super.onPostCreate(savedInstanceState);
+        GoNativeApplication application = (GoNativeApplication)getApplication();
+        application.mBridge.onPostCreate(this, savedInstanceState, isRoot);
+
 		// Sync the toggle state after onRestoreInstanceState has occurred.
         if (mDrawerToggle != null)
 		    mDrawerToggle.syncState();
 	}
-	
+
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        this.actionbarManager.setupActionBarTitleDisplay();
+
+        GoNativeApplication application = (GoNativeApplication)getApplication();
      // Pass any configuration change to the drawer toggles
         if (mDrawerToggle != null)
             mDrawerToggle.onConfigurationChanged(newConfig);
+//        if (swipeRefreshLayout != null)
+//       TODO     swipeRefreshLayout.onConfigurationChanged(newConfig);
+        application.mBridge.onConfigurationChange(this);
     }
-	
+
 	@Override
     @TargetApi(21)
     // Lollipop target API for REQEUST_SELECT_FILE_LOLLIPOP
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        GoNativeApplication application = (GoNativeApplication)getApplication();
+        application.mBridge.onActivityResult(this, requestCode, resultCode, data);
+
         if (data != null && data.getBooleanExtra("exit", false))
             finish();
 
@@ -1103,6 +1247,8 @@ public class MainActivity extends AppCompatActivity implements Observer,
             loadUrl(url);
         }
         Log.w(TAG, "Received intent without url");
+
+        ((GoNativeApplication) getApplication()).mBridge.onActivityNewIntent(this, intent);
     }
 
     @Override
@@ -1132,6 +1278,10 @@ public class MainActivity extends AppCompatActivity implements Observer,
                 return true;
             }
 		}
+
+        if (((GoNativeApplication) getApplication()).mBridge.onKeyDown(keyCode, event)) {
+            return true;
+        }
 
 		return super.onKeyDown(keyCode, event);
 	}
@@ -1177,11 +1327,6 @@ public class MainActivity extends AppCompatActivity implements Observer,
             if (!this.isPoolWebview) {
                 ((GoNativeWebviewInterface)prev).destroy();
             }
-
-            ((GoNativeWebviewInterface)prev).setOnSwipeListener(null);
-            if ((AppConfig.getInstance(this).swipeGestures)) {
-                newWebview.setOnSwipeListener(this);
-            }
         }
 
         this.isPoolWebview = isPoolWebview;
@@ -1197,80 +1342,55 @@ public class MainActivity extends AppCompatActivity implements Observer,
 	public boolean onCreateOptionsMenu(Menu menu) {
 		// Inflate the menu; this adds items to the action bar if it is present.
 		getMenuInflater().inflate(R.menu.topmenu, menu);
-
+        mOptionsMenu = menu;
         AppConfig appConfig = AppConfig.getInstance(this);
 
-        // search item in action bar
-		final MenuItem searchItem = menu.findItem(R.id.action_search);
-        if (appConfig.searchTemplateUrl != null) {
-            // make it visible
-            searchItem.setVisible(true);
-
-            final SearchView searchView = (SearchView) searchItem.getActionView();
-            if (searchView != null) {
-                SearchView.SearchAutoComplete searchAutoComplete = searchView.findViewById(androidx.appcompat.R.id.search_src_text);
-                if (searchAutoComplete != null) {
-                    searchAutoComplete.setTextColor(appConfig.actionbarForegroundColor);
-                    int hintColor = appConfig.actionbarForegroundColor;
-                    hintColor = Color.argb(192, Color.red(hintColor), Color.green(hintColor),
-                            Color.blue(hintColor));
-                    searchAutoComplete.setHintTextColor(hintColor);
-                }
-
-                ImageView closeButtonImage = searchView.findViewById(androidx.appcompat.R.id.search_close_btn);
-                if (closeButtonImage != null) {
-                    closeButtonImage.setColorFilter(appConfig.actionbarForegroundColor);
-                }
-
-
-                // listener to process query
-                searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
-                    @Override
-                    public boolean onQueryTextSubmit(String query) {
-                        searchItem.collapseActionView();
-
-                        try {
-                            String q = URLEncoder.encode(query, "UTF-8");
-                            loadUrl(AppConfig.getInstance(getApplicationContext()).searchTemplateUrl + q);
-                        } catch (UnsupportedEncodingException e) {
-                            return true;
-                        }
-
-                        return true;
-                    }
-
-                    @Override
-                    public boolean onQueryTextChange(String newText) {
-                        // do nothing
-                        return true;
-                    }
-                });
-
-                // listener to collapse action view when soft keyboard is closed
-                searchView.setOnQueryTextFocusChangeListener(new View.OnFocusChangeListener() {
-                    @Override
-                    public void onFocusChange(View v, boolean hasFocus) {
-                        if (!hasFocus) {
-                            searchItem.collapseActionView();
-                        }
-                    }
-                });
-            }
-        }
-
-        if (!appConfig.showRefreshButton) {
-            MenuItem refreshItem = menu.findItem(R.id.action_refresh);
-            if (refreshItem != null) {
+        MenuItem refreshItem = menu.findItem(R.id.action_refresh);
+        if (refreshItem != null) {
+            if (!appConfig.showRefreshButton) {
                 refreshItem.setVisible(false);
+                refreshItem.setEnabled(false);
+            } else {
+                Drawable drawable = refreshItem.getIcon();
+                // TODO [merge] : take current theme for dark support
+                drawable.setColorFilter(appConfig.actionbarForegroundColor, PorterDuff.Mode.SRC_ATOP);
+                refreshItem.setIcon(drawable);
             }
         }
 
         if (this.actionManager != null) {
             this.actionManager.addActions(menu);
+            this.actionbarManager.setupActionBarTitleDisplay();
         }
 
 		return true;
 	}
+
+    public Menu getOptionsMenu () {
+        return mOptionsMenu;
+    }
+
+	public void setMenuItemsVisible (boolean visible) {
+        setMenuItemsVisible(mOptionsMenu, visible, null);
+    }
+
+	private void setMenuItemsVisible(Menu menu, boolean visible, MenuItem exception) {
+        MenuItem refreshItem = menu.findItem(R.id.action_refresh);
+
+        for (int i = 0; i < menu.size(); i++) {
+            MenuItem item = menu.getItem(i);
+            if (item == exception) {
+                continue;
+            }
+
+            if (visible && item == refreshItem && !AppConfig.getInstance(this).showRefreshButton) {
+                continue;
+            }
+
+            item.setVisible(visible);
+            item.setEnabled(visible);
+        }
+    }
 
 	@Override
 	public boolean onOptionsItemSelected(MenuItem item) {
@@ -1289,14 +1409,17 @@ public class MainActivity extends AppCompatActivity implements Observer,
                 return true;
             }
         }
-        
+
         // handle other items
         switch (item.getItemId()){
             case android.R.id.home:
+                if (this.actionbarManager.isOnSearchMode()){
+                    this.actionbarManager.closeSearchView();
+                    this.actionbarManager.setOnSearchMode(false);
+                    return true;
+                }
                 finish();
                 return true;
-	        case R.id.action_search:
-	        	return true;
 	        case R.id.action_refresh:
                 onRefresh();
 	        	return true;
@@ -1304,25 +1427,33 @@ public class MainActivity extends AppCompatActivity implements Observer,
                 return super.onOptionsItemSelected(item);
         }
     }
-
+    
     @Override
     public void onRefresh() {
         refreshPage();
+        stopNavAnimation(true, 1000);
+    }
+    
+    private void stopNavAnimation(boolean isConsumed){
+        stopNavAnimation(isConsumed, 100);
+    }
+    
+    private void stopNavAnimation(boolean isConsumed, int delay){
         // let the refreshing spinner stay for a little bit if the native show/hide is disabled
         // otherwise there isn't enough of a user confirmation that the page is refreshing
-        if (AppConfig.getInstance(this).disableAnimations) {
+        if (isConsumed && AppConfig.getInstance(this).disableAnimations) {
             new Handler().postDelayed(new Runnable() {
                 @Override
                 public void run() {
-                    swipeRefresh.setRefreshing(false);
+                    swipeRefreshLayout.setRefreshing(false);
                 }
-            }, 1000); // 1 second
+            }, delay);
         } else {
-            this.swipeRefresh.setRefreshing(false);
+            this.swipeRefreshLayout.setRefreshing(false);
         }
     }
 
-    private void refreshPage() {
+    public void refreshPage() {
         String url = this.mWebview.getUrl();
         if (url != null && url.equals(UrlNavigation.OFFLINE_PAGE_URL)){
             if (this.mWebview.canGoBack()) {
@@ -1335,48 +1466,6 @@ public class MainActivity extends AppCompatActivity implements Observer,
         else {
             this.postLoadJavascript = this.postLoadJavascriptForRefresh;
             this.mWebview.loadUrl(url);
-        }
-    }
-
-    public void sendOneSignalInfo() {
-        boolean doNativeBridge = true;
-        String currentUrl = this.mWebview.getUrl();
-        if (currentUrl != null) {
-            doNativeBridge = LeanUtils.checkNativeBridgeUrls(currentUrl, this);
-        }
-
-        // onesignal javsacript callback
-        if (AppConfig.getInstance(this).oneSignalEnabled && doNativeBridge) {
-            try {
-                String userId = null;
-                String pushToken = null;
-                boolean subscribed = false;
-
-                OSPermissionSubscriptionState state = OneSignal.getPermissionSubscriptionState();
-                if (state != null && state.getSubscriptionStatus() != null) {
-                    userId = state.getSubscriptionStatus().getUserId();
-                    pushToken = state.getSubscriptionStatus().getPushToken();
-                    subscribed = state.getSubscriptionStatus().getSubscribed();
-                }
-
-                Map installationInfo = Installation.getInfo(this);
-
-                JSONObject jsonObject = new JSONObject(installationInfo);
-                if (userId != null) {
-                    jsonObject.put("oneSignalUserId", userId);
-                }
-                if (pushToken != null) {
-                    // registration id is old GCM name, but keep it for compatibility
-                    jsonObject.put("oneSignalregistrationId", pushToken);
-                    jsonObject.put("oneSignalPushToken", pushToken);
-                }
-                jsonObject.put("oneSignalSubscribed", subscribed);
-                jsonObject.put("oneSignalRequiresUserPrivacyConsent", !OneSignal.userProvidedPrivacyConsent());
-                String js = LeanUtils.createJsForCallback("gonative_onesignal_info", jsonObject);
-                runJavascript(js);
-            } catch (Exception e) {
-                Log.e(TAG, "Error with onesignal javscript callback", e);
-            }
         }
     }
 
@@ -1397,7 +1486,9 @@ public class MainActivity extends AppCompatActivity implements Observer,
             this.registrationManager.checkUrl(url);
         }
 
-        sendOneSignalInfo();
+        if (this.menuAdapter != null) {
+            this.menuAdapter.autoSelectItem(url);
+        }
     }
 
     // onPageStarted
@@ -1406,8 +1497,12 @@ public class MainActivity extends AppCompatActivity implements Observer,
             this.tabManager.autoSelectTab(url);
         }
 
+        if (this.menuAdapter != null) {
+            this.menuAdapter.autoSelectItem(url);
+        }
+
         AppConfig appConfig = AppConfig.getInstance(this);
-        setDrawerEnabled(appConfig.shouldShowSidebarForUrl(url));
+        setDrawerEnabled(appConfig.shouldShowSidebarForUrl(url) && sidebarNavigationEnabled);
     }
 
     public int urlLevelForUrl(String url) {
@@ -1507,6 +1602,10 @@ public class MainActivity extends AppCompatActivity implements Observer,
         return fileWriterSharer;
     }
 
+    public GNJSBridgeInterface getJsBridgeInterface() {
+        return jsBridgeInterface;
+    }
+
     public StatusCheckerBridge getStatusCheckerBridge() {
         return new StatusCheckerBridge();
     }
@@ -1516,7 +1615,7 @@ public class MainActivity extends AppCompatActivity implements Observer,
         super.setTitle(title);
 
         if (getSupportActionBar() != null) {
-            getSupportActionBar().setTitle(title);
+            showTextActionBarTitle(title);
         }
     }
 
@@ -1601,6 +1700,8 @@ public class MainActivity extends AppCompatActivity implements Observer,
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        ((GoNativeApplication) getApplication()).mBridge.onRequestPermissionsResult(this, requestCode, permissions, grantResults);
         switch (requestCode) {
             case REQUEST_PERMISSION_READ_EXTERNAL_STORAGE:
                 if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
@@ -1687,6 +1788,11 @@ public class MainActivity extends AppCompatActivity implements Observer,
 
     public RelativeLayout getFullScreenLayout() {
         return fullScreenLayout;
+    }
+
+    @Override
+    public GoNativeWebviewInterface getWebView() {
+        return mWebview;
     }
 
     public class StatusCheckerBridge {
@@ -1790,6 +1896,7 @@ public class MainActivity extends AppCompatActivity implements Observer,
 
         switch (appConfig.forceScreenOrientation) {
             case UNSPECIFIED:
+                if(appConfig.androidFullScreen) return;
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
                 break;
             case PORTRAIT:
@@ -1820,15 +1927,15 @@ public class MainActivity extends AppCompatActivity implements Observer,
     }
 
     public void enableSwipeRefresh() {
-        if (this.swipeRefresh != null) {
-            this.swipeRefresh.setEnabled(true);
+        if (this.swipeRefreshLayout != null) {
+            this.swipeRefreshLayout.setEnabled(true);
         }
     }
 
     public void restoreSwipRefreshDefault() {
-        if (this.swipeRefresh != null) {
+        if (this.swipeRefreshLayout != null) {
             AppConfig appConfig = AppConfig.getInstance(this);
-            this.swipeRefresh.setEnabled(appConfig.pullToRefresh);
+            this.swipeRefreshLayout.setEnabled(appConfig.pullToRefresh);
         }
     }
 
@@ -1948,5 +2055,43 @@ public class MainActivity extends AppCompatActivity implements Observer,
         WindowManager.LayoutParams layout = getWindow().getAttributes();
         layout.screenBrightness = brightness;
         getWindow().setAttributes(layout);
+    }
+
+    public void setRemoveExcessWebView(boolean removeExcessWebView){
+        this.removeExcessWebView = removeExcessWebView;
+    }
+
+    public int getWebViewCount(){
+        return webViewCount;
+    }
+
+    public void setSidebarNavigationEnabled(boolean enabled){
+        sidebarNavigationEnabled = enabled;
+        setDrawerEnabled(enabled);
+    }
+
+    public void setupAppTheme() {
+        WebSettings settings = this.mWebview.getSettings();
+
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
+
+            switch (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) {
+                case Configuration.UI_MODE_NIGHT_YES:
+                    WebSettingsCompat.setForceDark(this.mWebview.getSettings(), WebSettingsCompat.FORCE_DARK_ON);
+                    break;
+                case Configuration.UI_MODE_NIGHT_NO:
+                case Configuration.UI_MODE_NIGHT_UNDEFINED:
+                    WebSettingsCompat.setForceDark(this.mWebview.getSettings(), WebSettingsCompat.FORCE_DARK_OFF);
+                    break;
+            }
+
+            // Force dark on if supported, and only use theme from web
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK_STRATEGY)) {
+                WebSettingsCompat.setForceDarkStrategy(
+                        settings,
+                        WebSettingsCompat.DARK_STRATEGY_WEB_THEME_DARKENING_ONLY
+                );
+            }
+        }
     }
 }

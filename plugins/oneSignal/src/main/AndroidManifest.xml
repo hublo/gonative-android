@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.gonative.android.plugins.oneSignal">
+
+    <application>
+        <activity
+            android:name=".SubscriptionsActivity"
+            android:label="@string/subscriptions_activity_title" />
+    </application>
+
+</manifest>
