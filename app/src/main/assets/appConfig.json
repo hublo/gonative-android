@@ -12,7 +12,7 @@
     "appName": "Hublo",
     "iosBundleId": "fr.medgo.medgo1",
     "androidPackageName": "fr.medgo.medgo1",
-    "androidVersionName": "1.7.0",
+    "androidVersionName": "1.8.1",
     "publicKey": "owpbjr",
     "deviceRegKey": "yc4r0x24exknq1meptdetrxjmw"
   },
@@ -120,6 +120,10 @@
         },
         {
           "regex": "https?://([-\\w]+\\.)*google\\.com/maps/search/.*",
+          "internal": false
+        },
+        {
+          "regex": "https?://hublohelp\\.zendesk\\.com/.*",
           "internal": false
         },
         {
