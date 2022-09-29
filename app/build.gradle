@@ -21,7 +21,7 @@ android {
         minSdkVersion 16
         targetSdkVersion 30
         applicationId "fr.medgo.medgo1"
-        versionCode 45
+        versionCode 51
         multiDexEnabled true
         vectorDrawables.useSupportLibrary = true
 
@@ -85,7 +85,6 @@ dependencies {
     implementation 'com.facebook.android:facebook-android-sdk:5.0.0'
     implementation 'com.squareup:seismic:1.0.2'
     implementation 'com.onesignal:OneSignal:3.15.6'
-    implementation 'com.segment.analytics.android:analytics:4.9.4'
     /**** end all apps ****/
 
     /**** add-on module dependencies ****/
