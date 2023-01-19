@@ -492,7 +492,7 @@ public class UrlNavigation {
                     final String callback = uri.getQueryParameter("callback");
                     if (callback == null || callback.isEmpty()) return true;
 
-                    OneSignal.getTags(new OneSignal.OSGetTagsHandler() {
+                    OneSignal.getTags(new OneSignal.GetTagsHandler() {
                         @Override
                         public void tagsAvailable(JSONObject tags) {
                             JSONObject results = new JSONObject();

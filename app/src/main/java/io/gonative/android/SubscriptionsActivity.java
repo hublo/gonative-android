@@ -132,7 +132,7 @@ public class SubscriptionsActivity extends AppCompatActivity {
                 }
 
                 // update OneSignal info
-                OneSignal.getTags(new OneSignal.OSGetTagsHandler() {
+                OneSignal.getTags(new OneSignal.GetTagsHandler() {
                     @Override
                     public void tagsAvailable(JSONObject tags) {
                         if (tags != null) {

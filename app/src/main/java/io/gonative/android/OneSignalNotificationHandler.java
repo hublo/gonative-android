@@ -5,7 +5,7 @@ import android.content.Intent;
 import android.net.Uri;
 
 import com.onesignal.OSNotification;
-import com.onesignal.OSNotificationOpenedResult;
+import com.onesignal.OSNotificationOpenResult;
 import com.onesignal.OneSignal;
 
 import org.json.JSONObject;
@@ -13,7 +13,7 @@ import org.json.JSONObject;
 /**
  * Created by weiyin on 2/10/16.
  */
-public class OneSignalNotificationHandler implements OneSignal.OSNotificationOpenedHandler {
+public class OneSignalNotificationHandler implements OneSignal.NotificationOpenedHandler {
     private Context context;
 
     @SuppressWarnings("unused")
@@ -26,10 +26,10 @@ public class OneSignalNotificationHandler implements OneSignal.OSNotificationOpe
     }
 
     @Override
-    public void notificationOpened(OSNotificationOpenedResult openedResult) {
-        OSNotification notification = openedResult.getNotification();
+    public void notificationOpened(OSNotificationOpenResult openedResult) {
+        OSNotification notification = openedResult.notification;
 
-        String launchUrl = notification.getLaunchURL();
+        String launchUrl = notification.payload.launchURL;
         if (launchUrl != null && !launchUrl.isEmpty()) {
             Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(launchUrl));
             intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -37,7 +37,7 @@ public class OneSignalNotificationHandler implements OneSignal.OSNotificationOpe
             return;
         }
 
-        JSONObject additionalData = notification.getAdditionalData();
+        JSONObject additionalData = notification.payload.additionalData;
 
         String targetUrl = LeanUtils.optString(additionalData, "targetUrl");
         if (targetUrl == null) targetUrl = LeanUtils.optString(additionalData, "u");
