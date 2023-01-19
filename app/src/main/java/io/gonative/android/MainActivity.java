@@ -28,6 +28,7 @@ import androidx.fragment.app.DialogFragment;
 import androidx.core.content.ContextCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import androidx.core.view.GravityCompat;
+import androidx.core.view.ViewCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 import androidx.appcompat.app.ActionBar;
@@ -61,7 +62,7 @@ import android.widget.Toast;
 
 import com.aurelhubert.ahbottomnavigation.AHBottomNavigation;
 import com.facebook.applinks.AppLinkData;
-import com.onesignal.OSDeviceState;
+import com.onesignal.OSPermissionSubscriptionState;
 import com.onesignal.OneSignal;
 import com.squareup.seismic.ShakeDetector;
 
@@ -489,9 +490,9 @@ public class MainActivity extends AppCompatActivity implements Observer,
         super.onStart();
         if (AppConfig.getInstance(this).oneSignalEnabled) {
             OneSignal.clearOneSignalNotifications();
-            OSDeviceState device = OneSignal.getDeviceState();
+            OSPermissionSubscriptionState status = OneSignal.getPermissionSubscriptionState();
 
-            if (device == null || !device.isSubscribed()) {
+            if (!status.getSubscriptionStatus().getSubscribed()) {
                 OneSignal.addTrigger("unsubscribed", "true");
             }
         }
@@ -1367,14 +1368,14 @@ public class MainActivity extends AppCompatActivity implements Observer,
                 String pushToken = null;
                 boolean subscribed = false;
 
-                OSDeviceState device = OneSignal.getDeviceState();
-                if (device != null) {
-                    userId = device.getUserId();
-                    pushToken = device.getPushToken();
-                    subscribed = device.isSubscribed();
+                OSPermissionSubscriptionState state = OneSignal.getPermissionSubscriptionState();
+                if (state != null && state.getSubscriptionStatus() != null) {
+                    userId = state.getSubscriptionStatus().getUserId();
+                    pushToken = state.getSubscriptionStatus().getPushToken();
+                    subscribed = state.getSubscriptionStatus().getSubscribed();
                 }
 
-                Map<String, Object> installationInfo = Installation.getInfo(this);
+                Map installationInfo = Installation.getInfo(this);
 
                 JSONObject jsonObject = new JSONObject(installationInfo);
                 if (userId != null) {
@@ -1615,7 +1616,6 @@ public class MainActivity extends AppCompatActivity implements Observer,
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         switch (requestCode) {
             case REQUEST_PERMISSION_READ_EXTERNAL_STORAGE:
                 if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
