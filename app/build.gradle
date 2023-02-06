@@ -21,7 +21,7 @@ android {
         minSdkVersion 16
         targetSdkVersion 33
         applicationId "fr.medgo.medgo1"
-        versionCode 53
+        versionCode 55
         multiDexEnabled true
         vectorDrawables.useSupportLibrary = true
 
