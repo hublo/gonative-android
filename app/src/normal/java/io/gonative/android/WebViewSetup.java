@@ -10,7 +10,6 @@ import android.webkit.CookieManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 
-import java.io.File;
 import java.util.Map;
 
 import io.gonative.android.library.AppConfig;
@@ -68,7 +67,6 @@ public class WebViewSetup {
         }
     }
 
-    @SuppressWarnings("deprecation")
     @SuppressLint("SetJavaScriptEnabled")
     public static void setupWebview(GoNativeWebviewInterface webview, Context context) {
         if (!(webview instanceof LeanWebView)) {
@@ -81,12 +79,7 @@ public class WebViewSetup {
         LeanWebView wv = (LeanWebView)webview;
         WebSettings webSettings = wv.getSettings();
 
-        if (AppConfig.getInstance(context).allowZoom) {
-            webSettings.setBuiltInZoomControls(true);
-        }
-        else {
-            webSettings.setBuiltInZoomControls(false);
-        }
+        webSettings.setBuiltInZoomControls(AppConfig.getInstance(context).allowZoom);
 
         webSettings.setDisplayZoomControls(false);
         webSettings.setLoadWithOverviewMode(true);
@@ -105,9 +98,7 @@ public class WebViewSetup {
         }
 
         webSettings.setDomStorageEnabled(true);
-        File cachePath = new File(context.getCacheDir(), MainActivity.webviewCacheSubdir);
-        webSettings.setAppCachePath(cachePath.getAbsolutePath());
-        webSettings.setAppCacheEnabled(true);
+        webSettings.setCacheMode(WebSettings.LOAD_DEFAULT);
         webSettings.setDatabaseEnabled(true);
 
         webSettings.setSaveFormData(false);

@@ -14,10 +14,14 @@ import android.widget.Toast;
 import com.facebook.FacebookSdk;
 import com.joanzapata.iconify.Iconify;
 import com.joanzapata.iconify.fonts.FontAwesomeModule;
+import com.onesignal.OSDeviceState;
+import com.onesignal.OSNotificationReceivedEvent;
 import com.onesignal.OSSubscriptionObserver;
 import com.onesignal.OSSubscriptionState;
 import com.onesignal.OSSubscriptionStateChanges;
 import com.onesignal.OneSignal;
+
+import org.json.JSONObject;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -56,9 +60,10 @@ public class GoNativeApplication extends MultiDexApplication {
 
         if (appConfig.oneSignalEnabled) {
             OneSignal.setRequiresUserPrivacyConsent(appConfig.oneSignalRequiresUserPrivacyConsent);
-            OneSignal.init(this, "REMOTE", appConfig.oneSignalAppId,
-                    new OneSignalNotificationHandler(this));
-            OneSignal.setInFocusDisplaying(OneSignal.OSInFocusDisplayOption.Notification);
+            OneSignal.initWithContext(this);
+            OneSignal.setAppId(appConfig.oneSignalAppId);
+            OneSignal.setNotificationOpenedHandler(new OneSignalNotificationHandler(this));
+            OneSignal.setNotificationWillShowInForegroundHandler(notificationReceivedEvent -> notificationReceivedEvent.complete(notificationReceivedEvent.getNotification()));
         }
 
         if (appConfig.facebookEnabled) {
@@ -79,10 +84,10 @@ public class GoNativeApplication extends MultiDexApplication {
                 public void onOSSubscriptionChanged(OSSubscriptionStateChanges stateChanges) {
                     OSSubscriptionState to = stateChanges.getTo();
                     if (registrationManager != null) {
-                        registrationManager.setOneSignalUserId(to.getUserId(), to.getPushToken(), to.getSubscribed());
+                        registrationManager.setOneSignalUserId(to.getUserId(), to.getPushToken(), to.isSubscribed());
                     }
 
-                    if (to.getSubscribed()) {
+                    if (to.isSubscribed()) {
                         oneSignalRegistered = true;
                     }
 
@@ -101,12 +106,12 @@ public class GoNativeApplication extends MultiDexApplication {
                         return;
                     }
 
-                    OSSubscriptionState state = OneSignal.getPermissionSubscriptionState().getSubscriptionStatus();
-                    if (registrationManager != null) {
-                        registrationManager.setOneSignalUserId(state.getUserId(), state.getPushToken(), state.getSubscribed());
+                    OSDeviceState state = OneSignal.getDeviceState();
+                    if (state != null && registrationManager != null) {
+                        registrationManager.setOneSignalUserId(state.getUserId(), state.getPushToken(), state.isSubscribed());
                     }
 
-                    if (state.getSubscribed()) {
+                    if (state != null && state.isSubscribed()) {
                         scheduler.shutdown();
                         oneSignalRegistered = true;
 
