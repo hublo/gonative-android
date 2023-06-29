@@ -36,6 +36,7 @@ import io.gonative.android.library.AppConfig;
 public class GoNativeApplication extends MultiDexApplication {
     public static final String ONESIGNAL_STATUS_CHANGED_MESSAGE = "io.gonative.android.onesignal.statuschanged";
 
+    private SegmentManager segmentManager;
     private LoginManager loginManager;
     private RegistrationManager registrationManager;
     private WebViewPool webViewPool;
@@ -69,6 +70,8 @@ public class GoNativeApplication extends MultiDexApplication {
         if (appConfig.facebookEnabled) {
             FacebookSdk.setApplicationId(appConfig.facebookAppId);
         }
+
+        this.segmentManager = new SegmentManager(this);
 
         this.loginManager = new LoginManager(this);
 
