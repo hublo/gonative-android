@@ -21,7 +21,7 @@ android {
         minSdkVersion 16
         targetSdkVersion 33
         applicationId "fr.medgo.medgo1"
-        versionCode 56
+        versionCode 57
         multiDexEnabled true
         vectorDrawables.useSupportLibrary = true
 
@@ -37,7 +37,7 @@ android {
 
     signingConfigs {
         release {
-            storeFile file('/Users/chris/Dropbox (medGo)/medGo Chris/Tech/Repos : tools/android/certificates/android.jks')
+            storeFile file('../keys/android.jks')
             storePassword 'cocacola'
             keyAlias 'MyAndroidKey'
             keyPassword 'sweetsweden'

@@ -144,6 +144,10 @@ public class GoNativeApplication extends MultiDexApplication {
         return registrationManager;
     }
 
+    public SegmentManager getSegmentManager() {
+        return this.segmentManager;
+    }
+
     public WebViewPool getWebViewPool() {
         return webViewPool;
     }

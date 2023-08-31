@@ -293,6 +293,16 @@ public class UrlNavigation {
                 return true;
             }
 
+            if ("hublo".equals(uri.getHost())) {
+                if ("/setUserId".equals(uri.getPath())) {
+                    String userId = uri.getQuery();
+                    SegmentManager segmentManager = this.getSegmentManager();
+                    segmentManager.identify(userId);
+                }
+
+                return true;
+            }
+
             if ("config".equals(uri.getHost())) {
                 ConfigPreferences configPreferences = new ConfigPreferences(this.mainActivity);
                 configPreferences.handleUrl(uri);
@@ -1036,10 +1046,14 @@ public class UrlNavigation {
     public boolean chooseFileUpload(final String[] mimetypespec, final boolean multiple) {
         mainActivity.getPermission(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE}, (permissions, grantResults) -> {
             boolean isAllPermissionsGranted = PermissionUtils.isAllGranted(permissions, grantResults);
-            if (isAllPermissionsGranted) {
-                chooseFileUploadAfterPermission(mimetypespec, multiple);
+            if (PermissionUtils.shouldCheckStoragePermissions()) {
+                if (isAllPermissionsGranted) {
+                    chooseFileUploadAfterPermission(mimetypespec, multiple);
+                } else {
+                    mainActivity.openSettingsApp();
+                }
             } else {
-                mainActivity.openSettingsApp();
+                chooseFileUploadAfterPermission(mimetypespec, multiple);
             }
         });
         return true;
@@ -1180,6 +1194,10 @@ public class UrlNavigation {
     public boolean createNewWindow(ValueCallback callback) {
         ((GoNativeApplication) mainActivity.getApplication()).setWebviewValueCallback(callback);
         return createNewWindow();
+    }
+
+    private SegmentManager getSegmentManager() {
+        return ((GoNativeApplication) mainActivity.getApplication()).getSegmentManager();
     }
 
     private boolean createNewWindow() {

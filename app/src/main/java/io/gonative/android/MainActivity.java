@@ -63,6 +63,7 @@ import com.aurelhubert.ahbottomnavigation.AHBottomNavigation;
 import com.facebook.applinks.AppLinkData;
 import com.onesignal.OSDeviceState;
 import com.onesignal.OneSignal;
+import com.segment.analytics.Analytics;
 import com.squareup.seismic.ShakeDetector;
 
 import org.json.JSONException;
@@ -305,8 +306,8 @@ public class MainActivity extends AppCompatActivity implements Observer,
         if (url == null) url = intent.getStringExtra("url");
 
         if (url != null) {
-            this.initialUrl = url;
-            this.mWebview.loadUrl(url);
+            this.initialUrl = UrlUtils.rewriteUrl(url);
+            this.mWebview.loadUrl(this.initialUrl);
         } else if (intent.getBooleanExtra(EXTRA_WEBVIEW_WINDOW_OPEN, false)) {
             // no worries, loadUrl will be called when this new web view is passed back to the message
         } else {
@@ -333,7 +334,7 @@ public class MainActivity extends AppCompatActivity implements Observer,
                         url = uri.toString();
                     }
                     if (url != null) {
-                        final String finalUrl = url;
+                        final String finalUrl = UrlUtils.rewriteUrl(url);
                         new Handler(MainActivity.this.getMainLooper()).post(new Runnable() {
                             @Override
                             public void run() {
@@ -676,7 +677,9 @@ public class MainActivity extends AppCompatActivity implements Observer,
 
         updateMenu(false);
         this.loginManager.checkLogin();
-        this.mWebview.loadUrl(AppConfig.getInstance(this).initialUrl);
+
+        String url = UrlUtils.rewriteUrl(AppConfig.getInstance(this).initialUrl);
+        this.mWebview.loadUrl(url);
     }
 
     public void loadUrl(String url) {
@@ -692,7 +695,7 @@ public class MainActivity extends AppCompatActivity implements Observer,
         if (url.equalsIgnoreCase("gonative_logout"))
             logout();
         else
-            this.mWebview.loadUrl(url);
+            this.mWebview.loadUrl(UrlUtils.rewriteUrl(url));
 
         if (!isFromTab && this.tabManager != null) this.tabManager.selectTab(url, null);
     }
@@ -712,7 +715,7 @@ public class MainActivity extends AppCompatActivity implements Observer,
         } else {
             this.postLoadJavascript = javascript;
             this.postLoadJavascriptForRefresh = javascript;
-            this.mWebview.loadUrl(url);
+            this.mWebview.loadUrl(UrlUtils.rewriteUrl(url));
         }
 
         if (!isFromTab && this.tabManager != null) this.tabManager.selectTab(url, javascript);
@@ -990,7 +993,8 @@ public class MainActivity extends AppCompatActivity implements Observer,
             else {
                 // go to initialURL without login/signup override
                 this.mWebview.setCheckLoginSignup(false);
-                this.mWebview.loadUrl(AppConfig.getInstance(this).initialUrl);
+                String rewrittedUrl = UrlUtils.rewriteUrl(AppConfig.getInstance(this).initialUrl);
+                this.mWebview.loadUrl(rewrittedUrl);
             }
 
             if (AppConfig.getInstance(this).showNavigationMenu) {
@@ -1066,8 +1070,9 @@ public class MainActivity extends AppCompatActivity implements Observer,
             // from camera
             if (this.directUploadImageUri != null) {
                 // check if we have external storage permissions
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) !=
-                        PackageManager.PERMISSION_GRANTED) {
+                if (PermissionUtils.shouldCheckStoragePermissions()
+                        && (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) !=
+                        PackageManager.PERMISSION_GRANTED)) {
                     if (ActivityCompat.shouldShowRequestPermissionRationale(this,
                             Manifest.permission.READ_EXTERNAL_STORAGE)) {
                         Toast.makeText(this, R.string.external_storage_explanation, Toast.LENGTH_LONG).show();
@@ -1380,6 +1385,7 @@ public class MainActivity extends AppCompatActivity implements Observer,
                 if (userId != null) {
                     jsonObject.put("oneSignalUserId", userId);
                 }
+
                 if (pushToken != null) {
                     // registration id is old GCM name, but keep it for compatibility
                     jsonObject.put("oneSignalregistrationId", pushToken);
