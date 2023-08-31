@@ -1066,8 +1066,8 @@ public class MainActivity extends AppCompatActivity implements Observer,
             // from camera
             if (this.directUploadImageUri != null) {
                 // check if we have external storage permissions
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) !=
-                        PackageManager.PERMISSION_GRANTED) {
+                if (PermissionUtils.shouldCheckStoragePermissions()
+                        && (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED)) {
                     if (ActivityCompat.shouldShowRequestPermissionRationale(this,
                             Manifest.permission.READ_EXTERNAL_STORAGE)) {
                         Toast.makeText(this, R.string.external_storage_explanation, Toast.LENGTH_LONG).show();

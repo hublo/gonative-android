@@ -1,6 +1,6 @@
 buildscript {
     repositories {
-        maven { url 'https://plugins.gradle.org/m2/'}
+        maven { url 'https://plugins.gradle.org/m2/' }
     }
     dependencies {
         classpath 'gradle.plugin.com.onesignal:onesignal-gradle-plugin:0.12.10'
@@ -21,12 +21,12 @@ android {
         minSdkVersion 16
         targetSdkVersion 33
         applicationId "fr.medgo.medgo1"
-        versionCode 55
+        versionCode 56
         multiDexEnabled true
         vectorDrawables.useSupportLibrary = true
 
-        manifestPlaceholders = [manifestApplicationId: "${applicationId}",
-                                onesignal_app_id: "54238b1e-3d06-4ca2-987d-552487546f59",
+        manifestPlaceholders = [manifestApplicationId          : "${applicationId}",
+                                onesignal_app_id               : "54238b1e-3d06-4ca2-987d-552487546f59",
                                 onesignal_google_project_number: "REMOTE"]
     }
 
@@ -37,7 +37,7 @@ android {
 
     signingConfigs {
         release {
-            storeFile file('/Users/chris/Dropbox (medGo)/medGo Chris/Tech/Repos : tools/android/certificates/android.jks')
+            storeFile file('../keys/android.jks')
             storePassword 'cocacola'
             keyAlias 'MyAndroidKey'
             keyPassword 'sweetsweden'
