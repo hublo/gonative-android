@@ -1532,6 +1532,11 @@ public class MainActivity extends AppCompatActivity implements Observer,
         return new StatusCheckerBridge();
     }
 
+    public SegmentWrapper getSegmentWrapper() {
+        SegmentManager segmentManager = ((GoNativeApplication) getApplication()).getSegmentManager();
+        return new SegmentWrapper(segmentManager);
+    }
+
     @Override
     public void setTitle(CharSequence title) {
         super.setTitle(title);
@@ -1719,6 +1724,21 @@ public class MainActivity extends AppCompatActivity implements Observer,
                     checkReadyStatusResult(state);
                 }
             });
+        }
+    }
+
+
+    public class SegmentWrapper {
+
+        private SegmentManager segmentManager;
+
+        public SegmentWrapper(SegmentManager segmentManager) {
+            this.segmentManager = segmentManager;
+        }
+
+        @JavascriptInterface
+        public String getAnonymousUserId() {
+            return this.segmentManager.getAnonymousUserId();
         }
     }
 

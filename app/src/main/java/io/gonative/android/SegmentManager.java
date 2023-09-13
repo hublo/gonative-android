@@ -40,4 +40,8 @@ public class SegmentManager {
             this.analytics.reset();
         }
     }
+
+    public String getAnonymousUserId() {
+        return this.analytics.anonymousId();
+    }
 }
