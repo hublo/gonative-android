@@ -7,3 +7,6 @@ app/build/
 build/
 captures/
 .DS_Store
+*.aab
+*.apk
+*.aab

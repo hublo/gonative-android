@@ -134,6 +134,8 @@ public class GoNativeApplication extends MultiDexApplication {
         webViewPool = new WebViewPool();
 
         Iconify.with(new FontAwesomeModule());
+
+        OneSignalUtils.promptForPushNotifications();
     }
 
     public LoginManager getLoginManager() {
