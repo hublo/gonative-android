@@ -26,7 +26,7 @@ public class WebViewSetup {
             return;
         }
 
-        LeanWebView wv = (LeanWebView)webview;
+        LeanWebView wv = (LeanWebView) webview;
 
         setupWebview(wv, activity);
 
@@ -51,14 +51,17 @@ public class WebViewSetup {
         wv.removeJavascriptInterface("gonative_status_checker");
         wv.addJavascriptInterface(activity.getStatusCheckerBridge(), "gonative_status_checker");
 
+        wv.removeJavascriptInterface("hublo_segment");
+        wv.addJavascriptInterface(activity.getSegmentWrapper(), "nativeApp");
+
         wv.removeJavascriptInterface("gonative_file_writer_sharer");
         wv.addJavascriptInterface(activity.getFileWriterSharer().getJavascriptBridge(), "gonative_file_writer_sharer");
 
         if (activity.getIntent().getBooleanExtra(MainActivity.EXTRA_WEBVIEW_WINDOW_OPEN, false)) {
             // send to other webview
-            Message resultMsg = ((GoNativeApplication)activity.getApplication()).getWebviewMessage();
+            Message resultMsg = ((GoNativeApplication) activity.getApplication()).getWebviewMessage();
             if (resultMsg != null) {
-                WebView.WebViewTransport transport = (WebView.WebViewTransport)resultMsg.obj;
+                WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
                 if (transport != null) {
                     transport.setWebView(wv);
                     resultMsg.sendToTarget();
@@ -76,7 +79,7 @@ public class WebViewSetup {
 
         AppConfig appConfig = AppConfig.getInstance(context);
 
-        LeanWebView wv = (LeanWebView)webview;
+        LeanWebView wv = (LeanWebView) webview;
         WebSettings webSettings = wv.getSettings();
 
         webSettings.setBuiltInZoomControls(AppConfig.getInstance(context).allowZoom);
@@ -120,9 +123,9 @@ public class WebViewSetup {
 
     public static void setupWebviewGlobals(Context context) {
         // WebView debugging
-        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            Map<String,Object> installation = Installation.getInfo(context);
-            String dist = (String)installation.get("distribution");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            Map<String, Object> installation = Installation.getInfo(context);
+            String dist = (String) installation.get("distribution");
             if (dist != null && (dist.equals("debug") || dist.equals("adhoc"))) {
                 WebView.setWebContentsDebuggingEnabled(true);
             }

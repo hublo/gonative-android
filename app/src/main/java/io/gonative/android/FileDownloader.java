@@ -10,7 +10,9 @@ import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Environment;
+
 import androidx.core.content.FileProvider;
+
 import android.util.Log;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
@@ -115,6 +117,7 @@ public class FileDownloader implements DownloadListener {
                     String guessedName = LeanUtils.guessFileName(url, contentDisposition, mimetype);
                     request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, guessedName);
                     request.setMimeType(mimetype);
+                    request.setVisibleInDownloadsUi(true);
                     request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
 
                     enqueueBackgroundDownload(url, request);
@@ -136,7 +139,11 @@ public class FileDownloader implements DownloadListener {
 
     private void enqueueBackgroundDownload(String url, DownloadManager.Request request) {
         this.pendingExternalDownloads.put(url, request);
-        this.context.getExternalStorageWritePermission();
+        if (PermissionUtils.shouldCheckStoragePermissionsWhenUsingDownloadManager()) {
+            this.context.getExternalStorageWritePermission();
+        } else {
+            this.gotExternalStoragePermissions(true);
+        }
     }
 
     public void gotExternalStoragePermissions(boolean granted) {
@@ -267,14 +274,14 @@ public class FileDownloader implements DownloadListener {
                         extension = guessedName.substring(1);
                     } else {
                         filename = guessedName.substring(0, pos);
-                        extension = guessedName.substring(pos+1);
+                        extension = guessedName.substring(pos + 1);
                     }
 
                     if (!extension.isEmpty()) extension = "." + extension;
 
                     File downloadFile = File.createTempFile(filename, extension, downloadDir);
 
-                    if (!downloadFile.createNewFile() ){
+                    if (!downloadFile.createNewFile()) {
                         Log.e(TAG, "Error creating download file " + downloadFile.toString());
                     }
                     FileOutputStream os = new FileOutputStream(downloadFile);
@@ -288,7 +295,7 @@ public class FileDownloader implements DownloadListener {
                         os.write(buffer, 0, len1);
                         totalLen += len1;
 
-                        if (contentLength > 0){
+                        if (contentLength > 0) {
                             publishProgress((int) (totalLen * 10000 / contentLength));
                         }
 
