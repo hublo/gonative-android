@@ -127,6 +127,18 @@
           "internal": false
         },
         {
+          "regex": "https://env2.hubpreprod.com/front/api/generate-ics.*",
+          "internal": false
+        },
+        {
+          "regex": "https://ng.hubpreprod.com/front/api/generate-ics.*",
+          "internal": false
+        },
+        {
+          "regex": "https://ng.hublo.com/front/api/generate-ics.*",
+          "internal": false
+        },
+        {
           "regex": ".*",
           "internal": true
         }
