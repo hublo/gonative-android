@@ -14,7 +14,7 @@ public class PermissionUtils {
     }
 
     public static boolean shouldCheckStoragePermissions() {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.S;
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.Q;
     }
 
     public static boolean shouldCheckStoragePermissionsWhenUsingDownloadManager() {
